@@ -9,7 +9,7 @@ Ownership = mine | other | unknown
 Target { id, provider, name, description?: string|null, metadata: Record<string,string> }
 Settings { scope: mine|all, historyHours: 24|168, targets: Target[] }
 Connection { provider, status: connected|signed-out|missing-cli|error|unconfigured, account?: string|null, message?: string|null, cliVersion?: string|null }
-Activity { id, provider, kind, title, project, branch?: string|null, url, status, rawStatus, actor?: string|null, ownership, startedAt, finishedAt?: string|null, updatedAt }
+Activity { id, targetId, provider, kind, title, project, branch?: string|null, url, status, rawStatus, actor?: string|null, ownership, startedAt, finishedAt?: string|null, updatedAt }
 Issue { provider, message, targetId?: string|null }
 Snapshot { settings, connections: Connection[], activities: Activity[], issues: Issue[], refreshing: boolean, lastUpdatedAt?: string|null }
 Discovery { connection: Connection, targets: Target[], awsProfiles: string[], issues: Issue[] }
