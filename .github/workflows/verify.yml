@@ -1,0 +1,80 @@
+name: Verify desktop builds
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Intel
+            runner: macos-15-intel
+          - name: macOS Apple Silicon
+            runner: macos-15
+          - name: Windows x64
+            runner: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.2
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.23.3
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check frontend
+        run: pnpm check
+
+      - name: Test frontend
+        run: pnpm test
+
+      - name: Test bundled-tool preparation
+        run: pnpm test:tools
+
+      - name: Install Chromium for frontend end-to-end tests
+        run: pnpm exec playwright install chromium
+
+      - name: Test frontend end to end
+        run: pnpm test:e2e
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Check Rust formatting
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: Test Rust
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Lint Rust
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build desktop package with pinned tools
+        run: pnpm desktop:build
+
+      - name: Upload desktop packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: crowline-${{ matrix.name }}
+          path: src-tauri/target/release/bundle/**
+          if-no-files-found: error
