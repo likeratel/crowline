@@ -44,8 +44,8 @@ export default function App() {
   if (!snapshot)
     return (
       <main className="boot">
-        <Radio size={38} />
-        <h1>Launchwatch</h1>
+        <img className="boot-logo" src="/crowline.png" alt="" />
+        <h1>crowline</h1>
         <p>{error ?? "연결 상태를 확인하고 있습니다…"}</p>
         {error ? (
           <button className="button" onClick={() => void refresh()}>
@@ -80,14 +80,14 @@ export default function App() {
           }}
         >
           <span className="brand-mark">
-            <Radio size={22} />
+            <img src="/crowline.png" alt="" />
           </span>
           <span>
-            Launchwatch<small>DEPLOYMENT MONITOR</small>
+            crowline<small>DEPLOYMENT MONITOR</small>
           </span>
         </a>
         <div className="workspace-label">
-          <span className="workspace-avatar">LW</span>
+          <span className="workspace-avatar">CW</span>
           <div>
             내 워크스페이스<small>이 기기에서 실행 중</small>
           </div>
@@ -137,7 +137,7 @@ export default function App() {
             <span>각자의 계정으로, 이 기기에서만.</span>
           </div>
           <div className="version">
-            Launchwatch <span>v0.1.0</span>
+            crowline <span>v0.1.0</span>
           </div>
         </div>
       </aside>

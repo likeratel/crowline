@@ -114,13 +114,17 @@ export function Connections({ snapshot, onClose, onSave, onRefresh }: Props) {
     snapshot.connections.find((item) => item.provider === provider);
   const mergedTargets = [
     ...(result?.targets ?? []),
-    ...selected.filter(
+    ...[...snapshot.settings.targets, ...selected].filter(
       (target) =>
         target.provider === provider &&
         !result?.targets.some((item) => item.id === target.id),
     ),
   ];
-  const targets = mergedTargets.filter((target) =>
+  const uniqueTargets = mergedTargets.filter(
+    (target, index, all) =>
+      all.findIndex((item) => item.id === target.id) === index,
+  );
+  const targets = uniqueTargets.filter((target) =>
     `${target.name} ${target.description ?? ""}`
       .toLowerCase()
       .includes(search.toLowerCase()),
@@ -272,7 +276,7 @@ export function Connections({ snapshot, onClose, onSave, onRefresh }: Props) {
         ))}
         <div className="target-heading">
           <h3>
-            모니터링 대상 <span>{mergedTargets.length}</span>
+            모니터링 대상 <span>{uniqueTargets.length}</span>
           </h3>
           <span>
             {selected.filter((target) => target.provider === provider).length}개

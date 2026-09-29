@@ -107,11 +107,21 @@ p {
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 33px;
-  height: 33px;
-  background: var(--text);
-  color: #d8edb6;
-  border-radius: 10px;
+  width: 48px;
+  height: 44px;
+  background: #e4eddf;
+  border-radius: 12px;
+}
+.brand-mark img {
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+}
+.boot-logo {
+  width: 144px;
+  height: 144px;
+  background: #e4eddf;
+  border-radius: 32px;
 }
 .brand small {
   display: block;

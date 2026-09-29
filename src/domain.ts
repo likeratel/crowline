@@ -42,6 +42,7 @@ export const connectionSchema = z.object({
 });
 export const activitySchema = z.object({
   id: z.string(),
+  targetId: z.string().optional(),
   provider: providerSchema,
   kind: z.string(),
   title: z.string(),

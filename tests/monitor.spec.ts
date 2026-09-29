@@ -57,7 +57,7 @@ test("desktop and narrow dark layouts fit without horizontal scrolling", async (
   page,
 }) => {
   await page.screenshot({
-    path: "artifacts/launchwatch-light.png",
+    path: "artifacts/crowline-light.png",
     fullPage: true,
   });
   await page.emulateMedia({ colorScheme: "dark" });
@@ -71,7 +71,7 @@ test("desktop and narrow dark layouts fit without horizontal scrolling", async (
     ),
   ).toBe(true);
   await page.screenshot({
-    path: "artifacts/launchwatch-dark.png",
+    path: "artifacts/crowline-dark.png",
     fullPage: true,
   });
 });

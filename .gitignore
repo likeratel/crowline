@@ -32,3 +32,6 @@ test-results/
 artifacts/
 src-tauri/resources/tools/*
 !src-tauri/resources/tools/.gitkeep
+
+# Local agent orchestration state
+.omx/
