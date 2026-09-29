@@ -6,10 +6,10 @@ use std::{
 
 use crate::models::{Activity, Connection, ConnectionStatus, Discovery, Issue, Provider, Target};
 
-#[cfg(test)]
-use crate::models::{ActivityStatus, Ownership};
-
 mod support;
+
+#[cfg(test)]
+mod tests;
 
 use support::{
     cloudformation_operation_id, cloudformation_target, connection_status_for_error,
@@ -19,9 +19,6 @@ use support::{
     selected_profile, selected_region, should_collect_cloudformation_operation,
     should_collect_ecs_deployment, target_issue, target_metadata, terminal_time, AwsTargetMetadata,
 };
-
-#[cfg(test)]
-use support::profile_section;
 
 const AWS_PROVIDER: Provider = Provider::Aws;
 const CALL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -40,21 +37,40 @@ struct SharedProfiles {
     regions: BTreeMap<String, String>,
 }
 
+pub fn profile_names() -> Result<Vec<String>, String> {
+    Ok(read_shared_profiles()?.names.into_iter().collect())
+}
+
 /// Checks one explicit profile's identity without listing AWS resources.
-pub async fn connection(profile: Option<String>, region: Option<String>) -> Connection {
+pub async fn connection(
+    profile: Option<String>,
+    region: Option<String>,
+    connection_id: &str,
+) -> Connection {
     let profiles = match read_shared_profiles() {
         Ok(profiles) => profiles,
         Err(message) => {
-            return Connection::disconnected(AWS_PROVIDER, ConnectionStatus::Error, message)
+            return Connection::disconnected(
+                connection_id,
+                AWS_PROVIDER,
+                ConnectionStatus::Error,
+                message,
+            )
         }
     };
     let Some(profile) = (match selected_profile(profile) {
         Ok(profile) => profile,
         Err(message) => {
-            return Connection::disconnected(AWS_PROVIDER, ConnectionStatus::Unconfigured, message)
+            return Connection::disconnected(
+                connection_id,
+                AWS_PROVIDER,
+                ConnectionStatus::Unconfigured,
+                message,
+            )
         }
     }) else {
         return Connection::disconnected(
+            connection_id,
             AWS_PROVIDER,
             ConnectionStatus::Unconfigured,
             "Select an AWS profile to check its connection.",
@@ -62,6 +78,7 @@ pub async fn connection(profile: Option<String>, region: Option<String>) -> Conn
     };
     if !profiles.names.contains(&profile) {
         return Connection::disconnected(
+            connection_id,
             AWS_PROVIDER,
             ConnectionStatus::Unconfigured,
             "The selected AWS profile was not found in the shared AWS configuration.",
@@ -70,19 +87,25 @@ pub async fn connection(profile: Option<String>, region: Option<String>) -> Conn
     let region = match selected_region(region, profiles.regions.get(&profile)) {
         Ok(region) => region,
         Err(message) => {
-            return Connection::disconnected(AWS_PROVIDER, ConnectionStatus::Unconfigured, message)
+            return Connection::disconnected(
+                connection_id,
+                AWS_PROVIDER,
+                ConnectionStatus::Unconfigured,
+                message,
+            )
         }
     };
-    checked_connection(&load_config(&profile, &region).await).await
+    checked_connection(&load_config(&profile, &region).await, connection_id).await
 }
 
-async fn checked_connection(config: &aws_types::SdkConfig) -> Connection {
+async fn checked_connection(config: &aws_types::SdkConfig, connection_id: &str) -> Connection {
     let client = aws_sdk_sts::Client::new(config);
     match tokio::time::timeout(CALL_TIMEOUT, client.get_caller_identity().send()).await {
         Ok(Ok(identity)) => {
             let account = identity.account().unwrap_or("Unknown account");
             let arn = identity.arn().unwrap_or("Unknown identity");
             Connection {
+                connection_id: connection_id.into(),
                 provider: AWS_PROVIDER,
                 status: ConnectionStatus::Connected,
                 account: Some(format!("{account} ({arn})")),
@@ -91,11 +114,13 @@ async fn checked_connection(config: &aws_types::SdkConfig) -> Connection {
             }
         }
         Ok(Err(error)) => Connection::disconnected(
+            connection_id,
             AWS_PROVIDER,
             connection_status_for_error(&error.to_string()),
             friendly_aws_error("identity check", &error.to_string()),
         ),
         Err(_) => Connection::disconnected(
+            connection_id,
             AWS_PROVIDER,
             ConnectionStatus::Error,
             "AWS identity check timed out. Check the selected profile, network connection, and region.",
@@ -107,11 +132,13 @@ async fn checked_connection(config: &aws_types::SdkConfig) -> Connection {
 pub async fn discover(
     profile: Option<String>,
     region: Option<String>,
+    connection_id: &str,
 ) -> Result<Discovery, String> {
     let profiles = read_shared_profiles()?;
     let aws_profiles = profiles.names.into_iter().collect::<Vec<_>>();
     let Some(selected_profile) = selected_profile(profile)? else {
         return Ok(disconnected_discovery(
+            connection_id,
             aws_profiles,
             ConnectionStatus::Unconfigured,
             "Select an AWS profile to discover resources.",
@@ -120,6 +147,7 @@ pub async fn discover(
 
     if !aws_profiles.iter().any(|name| name == &selected_profile) {
         return Ok(disconnected_discovery(
+            connection_id,
             aws_profiles,
             ConnectionStatus::Unconfigured,
             "The selected AWS profile was not found in the shared AWS configuration.",
@@ -130,6 +158,7 @@ pub async fn discover(
         Ok(value) => value,
         Err(message) => {
             return Ok(disconnected_discovery(
+                connection_id,
                 aws_profiles,
                 ConnectionStatus::Unconfigured,
                 message,
@@ -138,7 +167,7 @@ pub async fn discover(
     };
 
     let config = load_config(&selected_profile, &selected_region).await;
-    let connection = checked_connection(&config).await;
+    let connection = checked_connection(&config, connection_id).await;
     if connection.status != ConnectionStatus::Connected {
         let message = connection
             .message
@@ -148,7 +177,7 @@ pub async fn discover(
             connection,
             targets: Vec::new(),
             aws_profiles,
-            issues: vec![partial_issue(message)],
+            issues: vec![partial_issue(connection_id, message)],
         });
     }
 
@@ -157,6 +186,7 @@ pub async fn discover(
     let cloudformation = aws_sdk_cloudformation::Client::new(&config);
     discover_stacks(
         &cloudformation,
+        connection_id,
         &selected_profile,
         &selected_region,
         &mut targets,
@@ -168,6 +198,7 @@ pub async fn discover(
         let ecs = aws_sdk_ecs::Client::new(&config);
         discover_ecs_services(
             &ecs,
+            connection_id,
             &selected_profile,
             &selected_region,
             &mut targets,
@@ -176,6 +207,7 @@ pub async fn discover(
         .await;
     } else {
         issues.push(partial_issue(
+            connection_id,
             "AWS discovery reached its target limit; ECS services were not listed.",
         ));
     }
@@ -190,11 +222,16 @@ pub async fn discover(
 
 /// Collects recent stack operations and ECS service deployments without changing AWS resources.
 pub async fn collect(targets: &[Target], history_hours: u32) -> (Vec<Activity>, Vec<Issue>) {
+    let connection_id = targets
+        .first()
+        .map(|target| target.connection_id.as_str())
+        .unwrap_or("");
     if !(1..=168).contains(&history_hours) {
         return (
             Vec::new(),
             vec![Issue {
                 provider: AWS_PROVIDER,
+                connection_id: (!connection_id.is_empty()).then(|| connection_id.into()),
                 message: "AWS activity history must be between 1 and 168 hours.".into(),
                 target_id: None,
             }],
@@ -217,6 +254,7 @@ pub async fn collect(targets: &[Target], history_hours: u32) -> (Vec<Activity>, 
         > MAX_COLLECT_TARGETS
     {
         issues.push(partial_issue(
+            connection_id,
             "AWS activity collection reached its target limit; some selected targets were skipped.",
         ));
     }
@@ -266,6 +304,7 @@ pub async fn collect(targets: &[Target], history_hours: u32) -> (Vec<Activity>, 
 
 async fn discover_stacks(
     client: &aws_sdk_cloudformation::Client,
+    connection_id: &str,
     profile: &str,
     region: &str,
     targets: &mut Vec<Target>,
@@ -282,14 +321,17 @@ async fn discover_stacks(
         let output = match tokio::time::timeout(CALL_TIMEOUT, request.send()).await {
             Ok(Ok(output)) => output,
             Ok(Err(error)) => {
-                issues.push(partial_issue(friendly_aws_error(
-                    "CloudFormation stack listing",
-                    &error.to_string(),
-                )));
+                issues.push(partial_issue(
+                    connection_id,
+                    friendly_aws_error("CloudFormation stack listing", &error.to_string()),
+                ));
                 return;
             }
             Err(_) => {
-                issues.push(partial_issue("CloudFormation stack listing timed out."));
+                issues.push(partial_issue(
+                    connection_id,
+                    "CloudFormation stack listing timed out.",
+                ));
                 return;
             }
         };
@@ -306,11 +348,12 @@ async fn discover_stacks(
             };
             push_target(
                 targets,
-                cloudformation_target(profile, region, name, stack.stack_id()),
+                cloudformation_target(connection_id, profile, region, name, stack.stack_id()),
                 issues,
             );
             if targets.len() >= MAX_DISCOVERED_TARGETS {
                 issues.push(partial_issue(
+                    connection_id,
                     "AWS discovery reached its target limit; more CloudFormation stacks may be available.",
                 ));
                 return;
@@ -323,6 +366,7 @@ async fn discover_stacks(
         }
         if page + 1 == MAX_DISCOVERY_PAGES {
             issues.push(partial_issue(
+                connection_id,
                 "CloudFormation stack listing reached its page limit; more stacks may be available.",
             ));
         }
@@ -331,6 +375,7 @@ async fn discover_stacks(
 
 async fn discover_ecs_services(
     client: &aws_sdk_ecs::Client,
+    connection_id: &str,
     profile: &str,
     region: &str,
     targets: &mut Vec<Target>,
@@ -346,22 +391,35 @@ async fn discover_ecs_services(
         let output = match tokio::time::timeout(CALL_TIMEOUT, request.send()).await {
             Ok(Ok(output)) => output,
             Ok(Err(error)) => {
-                issues.push(partial_issue(friendly_aws_error(
-                    "ECS cluster listing",
-                    &error.to_string(),
-                )));
+                issues.push(partial_issue(
+                    connection_id,
+                    friendly_aws_error("ECS cluster listing", &error.to_string()),
+                ));
                 return;
             }
             Err(_) => {
-                issues.push(partial_issue("ECS cluster listing timed out."));
+                issues.push(partial_issue(
+                    connection_id,
+                    "ECS cluster listing timed out.",
+                ));
                 return;
             }
         };
 
         for cluster in output.cluster_arns() {
-            discover_cluster_services(client, profile, region, cluster, targets, issues).await;
+            discover_cluster_services(
+                client,
+                connection_id,
+                profile,
+                region,
+                cluster,
+                targets,
+                issues,
+            )
+            .await;
             if targets.len() >= MAX_DISCOVERED_TARGETS {
                 issues.push(partial_issue(
+                    connection_id,
                     "AWS discovery reached its target limit; more ECS services may be available.",
                 ));
                 return;
@@ -374,6 +432,7 @@ async fn discover_ecs_services(
         }
         if cluster_page + 1 == MAX_DISCOVERY_PAGES {
             issues.push(partial_issue(
+                connection_id,
                 "ECS cluster listing reached its page limit; more clusters may be available.",
             ));
         }
@@ -382,6 +441,7 @@ async fn discover_ecs_services(
 
 async fn discover_cluster_services(
     client: &aws_sdk_ecs::Client,
+    connection_id: &str,
     profile: &str,
     region: &str,
     cluster: &str,
@@ -398,14 +458,17 @@ async fn discover_cluster_services(
         let output = match tokio::time::timeout(CALL_TIMEOUT, request.send()).await {
             Ok(Ok(output)) => output,
             Ok(Err(error)) => {
-                issues.push(partial_issue(friendly_aws_error(
-                    "ECS service listing",
-                    &error.to_string(),
-                )));
+                issues.push(partial_issue(
+                    connection_id,
+                    friendly_aws_error("ECS service listing", &error.to_string()),
+                ));
                 return;
             }
             Err(_) => {
-                issues.push(partial_issue("ECS service listing timed out."));
+                issues.push(partial_issue(
+                    connection_id,
+                    "ECS service listing timed out.",
+                ));
                 return;
             }
         };
@@ -418,19 +481,25 @@ async fn discover_cluster_services(
             let described = match tokio::time::timeout(CALL_TIMEOUT, request.send()).await {
                 Ok(Ok(output)) => output,
                 Ok(Err(error)) => {
-                    issues.push(partial_issue(friendly_aws_error(
-                        "ECS service description",
-                        &error.to_string(),
-                    )));
+                    issues.push(partial_issue(
+                        connection_id,
+                        friendly_aws_error("ECS service description", &error.to_string()),
+                    ));
                     continue;
                 }
                 Err(_) => {
-                    issues.push(partial_issue("ECS service description timed out."));
+                    issues.push(partial_issue(
+                        connection_id,
+                        "ECS service description timed out.",
+                    ));
                     continue;
                 }
             };
             if !described.failures().is_empty() {
-                issues.push(partial_issue("ECS did not describe every listed service."));
+                issues.push(partial_issue(
+                    connection_id,
+                    "ECS did not describe every listed service.",
+                ));
             }
             for service in described.services() {
                 let Some(name) = service.service_name() else {
@@ -439,11 +508,12 @@ async fn discover_cluster_services(
                 let service_id = service.service_arn().unwrap_or(name);
                 push_target(
                     targets,
-                    ecs_target(profile, region, cluster, service_id, name),
+                    ecs_target(connection_id, profile, region, cluster, service_id, name),
                     issues,
                 );
                 if targets.len() >= MAX_DISCOVERED_TARGETS {
                     issues.push(partial_issue(
+                        connection_id,
                         "AWS discovery reached its target limit; more ECS services may be available.",
                     ));
                     return;
@@ -457,6 +527,7 @@ async fn discover_cluster_services(
         }
         if page + 1 == MAX_DISCOVERY_PAGES {
             issues.push(partial_issue(
+                connection_id,
                 "ECS service listing reached its page limit; more services may be available.",
             ));
         }
@@ -544,6 +615,7 @@ async fn collect_stack_events(
                 id,
                 target_id: target.id.clone(),
                 provider: AWS_PROVIDER,
+                connection_id: target.connection_id.clone(),
                 kind: "cloudformation".into(),
                 title: format!("CloudFormation stack {stack}"),
                 project: target.name.clone(),
@@ -649,6 +721,7 @@ async fn collect_ecs_deployments(
                 id: deployment_id,
                 target_id: target.id.clone(),
                 provider: AWS_PROVIDER,
+                connection_id: target.connection_id.clone(),
                 kind: "ecs".into(),
                 title: format!("ECS service {}", service_name(service)),
                 project: target.name.clone(),
@@ -708,86 +781,4 @@ fn activity_id(parts: &[&str]) -> String {
             })
     });
     format!("aws-{hash:016x}")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalizes_cloudformation_and_ecs_deployment_statuses() {
-        assert_eq!(
-            normalize_cloudformation_status("UPDATE_IN_PROGRESS"),
-            ActivityStatus::Running
-        );
-        assert_eq!(
-            normalize_cloudformation_status("UPDATE_ROLLBACK_COMPLETE"),
-            ActivityStatus::Failed
-        );
-        assert_eq!(
-            normalize_cloudformation_status("CREATE_COMPLETE"),
-            ActivityStatus::Success
-        );
-        assert_eq!(normalize_ecs_status("IN_PROGRESS"), ActivityStatus::Running);
-        assert_eq!(normalize_ecs_status("COMPLETED"), ActivityStatus::Success);
-        assert_eq!(normalize_ecs_status("FAILED"), ActivityStatus::Failed);
-        assert_eq!(normalize_ecs_status("PRIMARY"), ActivityStatus::Unknown);
-    }
-
-    #[test]
-    fn shared_iam_role_does_not_establish_activity_ownership() {
-        assert_eq!(
-            ownership_from_observed_actor(Some(
-                "arn:aws:sts::123456789012:assumed-role/Deploy/shared-session"
-            )),
-            Ownership::Unknown
-        );
-    }
-
-    #[test]
-    fn completed_stack_update_replaces_its_older_running_event() {
-        let mut operations = HashSet::new();
-        let events = [
-            ("update-42", "UPDATE_COMPLETE"),
-            ("update-42", "UPDATE_IN_PROGRESS"),
-        ];
-        let statuses = events
-            .into_iter()
-            .filter_map(|(operation, status)| {
-                record_latest_stack_operation(&mut operations, operation).then_some(status)
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(statuses, vec!["UPDATE_COMPLETE"]);
-        assert_eq!(
-            normalize_cloudformation_status(statuses[0]),
-            ActivityStatus::Success
-        );
-    }
-
-    #[test]
-    fn parses_only_profile_sections_from_shared_config() {
-        assert_eq!(
-            profile_section("[profile engineering]", true).as_deref(),
-            Some("engineering")
-        );
-        assert_eq!(
-            profile_section("[default]", true).as_deref(),
-            Some("default")
-        );
-        assert_eq!(profile_section("[sso-session crowline]", true), None);
-        assert_eq!(
-            profile_section("[production]", false).as_deref(),
-            Some("production")
-        );
-    }
-
-    #[test]
-    fn discovery_requires_an_explicit_profile_selection() {
-        assert_eq!(selected_profile(None).expect("optional profile"), None);
-        assert_eq!(
-            selected_profile(Some("engineering".into())).expect("valid profile"),
-            Some("engineering".into())
-        );
-    }
 }

@@ -7,10 +7,10 @@
   width: 620px;
   max-width: calc(100vw - 40px);
   max-height: calc(100vh - 48px);
-  box-shadow: 0 24px 100px #12201330;
+  box-shadow: 0 24px 100px #00000080;
 }
 .connections-dialog::backdrop {
-  background: #14211870;
+  background: #000000b0;
   backdrop-filter: blur(3px);
 }
 .dialog-header {
@@ -45,7 +45,7 @@
 }
 .provider-tabs button[aria-selected="true"] {
   color: var(--text);
-  border-bottom-color: var(--green);
+  border-bottom-color: var(--focus);
   font-weight: 600;
 }
 .dialog-body {
@@ -68,7 +68,7 @@
   flex-shrink: 0;
 }
 .connection-dot.connected {
-  background: #7aa261;
+  background: #97b4a5;
 }
 .connection-state strong {
   font-size: 12px;
@@ -148,7 +148,7 @@
   background: var(--hover);
 }
 .target-option input {
-  accent-color: var(--green);
+  accent-color: var(--focus);
   width: 15px;
   height: 15px;
   flex-shrink: 0;
@@ -205,4 +205,50 @@
   line-height: 1.7;
   color: var(--muted);
   margin-top: 12px;
+}
+.account-picker {
+  margin-bottom: 20px;
+}
+.account-picker-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.account-picker-row label {
+  flex: 1;
+  min-width: 0;
+}
+.account-picker label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.account-picker input,
+.account-picker select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--canvas);
+  color: var(--text);
+  font-size: 11px;
+}
+.account-picker-row .icon-button {
+  height: 32px;
+}
+.account-create {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.account-create p {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
 }

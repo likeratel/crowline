@@ -15,8 +15,16 @@ const optionalText = z.string().nullish();
 const date = z
   .string()
   .refine((value) => Number.isFinite(Date.parse(value)), "유효하지 않은 날짜");
+export const accountSchema = z.object({
+  id: z.string().min(1),
+  provider: providerSchema,
+  label: z.string().min(1),
+  mode: z.enum(["local", "isolated"]),
+  profile: optionalText,
+});
 export const targetSchema = z.object({
   id: z.string().min(1),
+  connectionId: z.string().min(1),
   provider: providerSchema,
   name: z.string(),
   description: optionalText,
@@ -26,8 +34,10 @@ export const settingsSchema = z.object({
   scope: z.enum(["mine", "all"]),
   historyHours: z.union([z.literal(24), z.literal(168)]),
   targets: z.array(targetSchema),
+  accounts: z.array(accountSchema),
 });
 export const connectionSchema = z.object({
+  connectionId: z.string(),
   provider: providerSchema,
   status: z.enum([
     "connected",
@@ -42,6 +52,7 @@ export const connectionSchema = z.object({
 });
 export const activitySchema = z.object({
   id: z.string(),
+  connectionId: z.string().min(1),
   targetId: z.string().optional(),
   provider: providerSchema,
   kind: z.string(),
@@ -58,6 +69,7 @@ export const activitySchema = z.object({
   updatedAt: date,
 });
 export const issueSchema = z.object({
+  connectionId: optionalText,
   provider: providerSchema,
   message: z.string(),
   targetId: optionalText,
@@ -77,6 +89,7 @@ export const discoverySchema = z.object({
   issues: z.array(issueSchema),
 });
 export const loginSchema = z.object({
+  connectionId: z.string(),
   provider: providerSchema,
   state: z.enum(["waiting", "complete", "error"]),
   message: z.string(),
@@ -84,6 +97,7 @@ export const loginSchema = z.object({
   code: optionalText,
 });
 export type Provider = z.infer<typeof providerSchema>;
+export type Account = z.infer<typeof accountSchema>;
 export type Activity = z.infer<typeof activitySchema>;
 export type Target = z.infer<typeof targetSchema>;
 export type Settings = z.infer<typeof settingsSchema>;
@@ -115,31 +129,63 @@ export function visibleActivities(
   provider: Provider | "all",
   search: string,
   now = Date.now(),
+  connectionId = "all",
 ) {
   const query = search.trim().toLocaleLowerCase();
   const cutoff = now - snapshot.settings.historyHours * 60 * 60 * 1000;
-  return snapshot.activities
-    .filter(
-      (activity) =>
-        (snapshot.settings.scope === "all" || activity.ownership === "mine") &&
-        (provider === "all" || activity.provider === provider) &&
-        (isActive(activity) ||
-          activity.status === "unknown" ||
-          Date.parse(activity.finishedAt ?? activity.updatedAt) >= cutoff) &&
-        (!query ||
-          [
-            activity.title,
-            activity.project,
-            activity.branch,
-            activity.actor,
-          ].some((part) => part?.toLocaleLowerCase().includes(query))),
-    )
-    .sort(
-      (a, b) =>
-        Date.parse(b.finishedAt ?? b.updatedAt) -
-        Date.parse(a.finishedAt ?? a.updatedAt),
-    );
+  const candidates = snapshot.activities.filter(
+    (activity) =>
+      (connectionId === "all" || activity.connectionId === connectionId) &&
+      (provider === "all" || activity.provider === provider),
+  );
+  const reconciled = candidates.reduce<Record<string, Activity>>(
+    (previous, activity) => {
+      const key = `${activity.provider}:${activity.id}`;
+      const existing = previous[key];
+      if (!existing) return { ...previous, [key]: activity };
+      const delta =
+        Date.parse(activity.updatedAt) - Date.parse(existing.updatedAt);
+      const terminal = (item: Activity) =>
+        !isActive(item) && item.status !== "unknown";
+      const newer =
+        delta > 0 || (delta === 0 && terminal(activity) && !terminal(existing));
+      const sameState =
+        delta === 0 && terminal(activity) === terminal(existing);
+      const latest =
+        newer || (sameState && activity.ownership === "mine")
+          ? activity
+          : existing;
+      const ownership =
+        existing.ownership === "mine" || activity.ownership === "mine"
+          ? "mine"
+          : latest.ownership;
+      return { ...previous, [key]: { ...latest, ownership } };
+    },
+    {},
+  );
+  const filtered = Object.values(reconciled).filter(
+    (activity) =>
+      (snapshot.settings.scope === "all" || activity.ownership === "mine") &&
+      (isActive(activity) ||
+        activity.status === "unknown" ||
+        Date.parse(activity.finishedAt ?? activity.updatedAt) >= cutoff) &&
+      (!query ||
+        [
+          activity.title,
+          activity.project,
+          activity.branch,
+          activity.actor,
+        ].some((part) => part?.toLocaleLowerCase().includes(query))),
+  );
+  return filtered.sort(
+    (a, b) =>
+      Date.parse(b.finishedAt ?? b.updatedAt) -
+      Date.parse(a.finishedAt ?? a.updatedAt),
+  );
 }
+
+export const targetKey = (target: Target) =>
+  `${target.provider}:${target.connectionId}:${target.id}`;
 
 export function timeAgo(value: string, now = Date.now()): string {
   const seconds = Math.max(0, Math.floor((now - Date.parse(value)) / 1000));

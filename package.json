@@ -2,6 +2,12 @@
   "name": "crowline",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/likeratel/crowline.git"
+  },
+  "packageManager": "pnpm@10.30.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,7 +19,7 @@
     "test:e2e": "playwright test",
     "tools:prepare": "node scripts/prepare-tools.mjs",
     "desktop:build": "pnpm tools:prepare && pnpm tauri build",
-    "test:tools": "node --test scripts/prepare-tools.test.mjs",
+    "test:tools": "node --test scripts/prepare-tools.test.mjs scripts/isolated-github.test.mjs",
     "prepare-tools": "node scripts/prepare-tools.mjs",
     "format:check": "prettier --check src tests *.ts *.json index.html"
   },
@@ -37,5 +43,5 @@
     "vite": "^8.0.16",
     "vitest": "^5.0.2"
   },
-  "description": "A personal deployment monitor for your menu bar and system tray"
+  "description": "A local-first menu bar and system tray monitor for GitHub Actions, Vercel, and AWS. Built with Tauri."
 }

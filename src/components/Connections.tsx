@@ -11,6 +11,8 @@ import { bridge, errorMessage } from "../bridge";
 import {
   PROVIDERS,
   PROVIDER_NAMES,
+  targetKey,
+  type Account,
   type Discovery,
   type LoginStatus,
   type Provider,
@@ -19,6 +21,8 @@ import {
   type Target,
 } from "../domain";
 import { ProviderIcon } from "./ProviderIcon";
+import { AccountPicker } from "./AccountPicker";
+import { selectedTargets, type TargetChanges } from "../targetSelection";
 interface Props {
   snapshot: Snapshot;
   onClose: () => void;
@@ -27,16 +31,24 @@ interface Props {
 }
 export function Connections({ snapshot, onClose, onSave, onRefresh }: Props) {
   const [provider, setProvider] = useState<Provider>("github");
-  const [results, setResults] = useState<Partial<Record<Provider, Discovery>>>(
+  const [connectionId, setConnectionId] = useState(
+    snapshot.settings.accounts.find((account) => account.provider === "github")
+      ?.id ?? "",
+  );
+  const [awsProfiles, setAwsProfiles] = useState<string[]>([]);
+  const [results, setResults] = useState<Partial<Record<string, Discovery>>>(
     {},
   );
-  const [selected, setSelected] = useState(snapshot.settings.targets);
-  const [profile, setProfile] = useState("");
+  const [targetChanges, setTargetChanges] = useState<TargetChanges>({});
+  const selected = selectedTargets(snapshot.settings, targetChanges);
   const [region, setRegion] = useState("ap-northeast-2");
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [login, setLogin] = useState<LoginStatus | null>(null);
+  const [logins, setLogins] = useState<Partial<Record<string, LoginStatus>>>(
+    {},
+  );
+  const login = logins[connectionId];
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     dialog.current?.showModal();
@@ -49,9 +61,13 @@ export function Connections({ snapshot, onClose, onSave, onRefresh }: Props) {
       if (pending) return;
       pending = true;
       void bridge
-        .loginStatus(login.provider)
+        .loginStatus(login.provider, login.connectionId)
         .then((value) => {
-          if (active) setLogin(value);
+          if (active)
+            setLogins((previous) => ({
+              ...previous,
+              [value.connectionId]: value,
+            }));
         })
         .catch((cause: unknown) => {
           if (active) setError(errorMessage(cause));
@@ -64,17 +80,88 @@ export function Connections({ snapshot, onClose, onSave, onRefresh }: Props) {
       active = false;
       window.clearInterval(timer);
     };
-  }, [login?.state, login?.provider]);
+  }, [login?.state, login?.provider, login?.connectionId]);
+  const accounts = snapshot.settings.accounts.filter(
+    (account) => account.provider === provider,
+  );
+  const account = accounts.find((item) => item.id === connectionId);
+  const selectAccount = (value: Account) => {
+    setConnectionId(value.id);
+    setSearch("");
+    setError(null);
+  };
+  const createAccount = async (label: string, profile: string | null) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await bridge.createConnection(provider, label, profile);
+      await onRefresh();
+      selectAccount(created);
+      return true;
+    } catch (cause) {
+      setError(errorMessage(cause));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const removeAccount = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const saved = await bridge.removeConnection(connectionId);
+      setLogins((previous) =>
+        Object.fromEntries(
+          Object.entries(previous).filter(([id]) => id !== connectionId),
+        ),
+      );
+      setResults((previous) =>
+        Object.fromEntries(
+          Object.entries(previous).filter(([id]) => id !== connectionId),
+        ),
+      );
+      setTargetChanges((previous) =>
+        Object.fromEntries(
+          Object.entries(previous).filter(
+            ([, change]) => change.target.connectionId !== connectionId,
+          ),
+        ),
+      );
+      setConnectionId(
+        saved.accounts.find((item) => item.provider === provider)?.id ?? "",
+      );
+      await onRefresh();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const loadProfiles = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setAwsProfiles(
+        (await bridge.discover("aws", null, null, null)).awsProfiles,
+      );
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   const discover = async () => {
     setBusy(true);
     setError(null);
     try {
       const found = await bridge.discover(
         provider,
-        profile || null,
+        connectionId || null,
+        account?.profile ?? null,
         region || null,
       );
-      setResults((previous) => ({ ...previous, [provider]: found }));
+      setResults((previous) => ({ ...previous, [connectionId]: found }));
+      if (provider === "aws") setAwsProfiles(found.awsProfiles);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -85,7 +172,12 @@ export function Connections({ snapshot, onClose, onSave, onRefresh }: Props) {
     setBusy(true);
     setError(null);
     try {
-      setLogin(await bridge.login(provider, profile || null));
+      const status = await bridge.login(
+        provider,
+        connectionId,
+        account?.profile ?? null,
+      );
+      setLogins((previous) => ({ ...previous, [connectionId]: status }));
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -103,26 +195,30 @@ export function Connections({ snapshot, onClose, onSave, onRefresh }: Props) {
     }
   };
   const toggle = (target: Target) =>
-    setSelected((previous) =>
-      previous.some((item) => item.id === target.id)
-        ? previous.filter((item) => item.id !== target.id)
-        : [...previous, target],
-    );
-  const result = results[provider];
+    setTargetChanges((previous) => ({
+      ...previous,
+      [targetKey(target)]: {
+        target,
+        selected: !selected.some(
+          (item) => targetKey(item) === targetKey(target),
+        ),
+      },
+    }));
+  const result = results[connectionId];
   const connection =
     result?.connection ??
-    snapshot.connections.find((item) => item.provider === provider);
+    snapshot.connections.find((item) => item.connectionId === connectionId);
   const mergedTargets = [
     ...(result?.targets ?? []),
     ...[...snapshot.settings.targets, ...selected].filter(
       (target) =>
-        target.provider === provider &&
-        !result?.targets.some((item) => item.id === target.id),
+        target.connectionId === connectionId &&
+        !result?.targets.some((item) => targetKey(item) === targetKey(target)),
     ),
   ];
   const uniqueTargets = mergedTargets.filter(
     (target, index, all) =>
-      all.findIndex((item) => item.id === target.id) === index,
+      all.findIndex((item) => targetKey(item) === targetKey(target)) === index,
   );
   const targets = uniqueTargets.filter((target) =>
     `${target.name} ${target.description ?? ""}`
@@ -159,8 +255,14 @@ export function Connections({ snapshot, onClose, onSave, onRefresh }: Props) {
             key={item}
             role="tab"
             aria-selected={provider === item}
+            disabled={busy}
             onClick={() => {
               setProvider(item);
+              setConnectionId(
+                snapshot.settings.accounts.find(
+                  (account) => account.provider === item,
+                )?.id ?? "",
+              );
               setSearch("");
               setError(null);
             }}
@@ -171,6 +273,18 @@ export function Connections({ snapshot, onClose, onSave, onRefresh }: Props) {
         ))}
       </div>
       <div className="dialog-body">
+        <AccountPicker
+          key={provider}
+          provider={provider}
+          accounts={accounts}
+          selectedId={connectionId}
+          busy={busy}
+          profiles={awsProfiles}
+          onSelect={selectAccount}
+          onCreate={createAccount}
+          onRemove={removeAccount}
+          onLoadProfiles={loadProfiles}
+        />
         <div className="connection-state">
           <span
             className={`connection-dot ${connection?.status === "connected" ? "connected" : ""}`}
@@ -185,21 +299,11 @@ export function Connections({ snapshot, onClose, onSave, onRefresh }: Props) {
             </p>
           </div>
         </div>
-        {provider === "aws" && (
+        {provider === "aws" && account && (
           <div className="aws-fields">
             <label>
               프로필
-              <input
-                list="aws-profiles"
-                value={profile}
-                onChange={(event) => setProfile(event.target.value)}
-                placeholder="default"
-              />
-              <datalist id="aws-profiles">
-                {result?.awsProfiles.map((name) => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
+              <input value={account.profile ?? ""} readOnly />
             </label>
             <label>
               리전
@@ -215,7 +319,7 @@ export function Connections({ snapshot, onClose, onSave, onRefresh }: Props) {
           <button
             className="button primary"
             onClick={() => void discover()}
-            disabled={busy}
+            disabled={busy || !account}
           >
             {busy ? (
               <LoaderCircle size={15} className="spin" />
@@ -227,13 +331,18 @@ export function Connections({ snapshot, onClose, onSave, onRefresh }: Props) {
           <button
             className="button"
             onClick={() => void beginLogin()}
-            disabled={busy || login?.state === "waiting"}
+            disabled={
+              busy ||
+              !account ||
+              (login?.connectionId === connectionId &&
+                login.state === "waiting")
+            }
           >
             {provider === "aws" ? "SSO 로그인" : "브라우저로 로그인"}
             <ArrowUpRight size={14} />
           </button>
         </div>
-        {login?.provider === provider && (
+        {login?.connectionId === connectionId && (
           <div
             className={`notice ${login.state === "error" ? "warning" : ""}`}
             role="status"
@@ -279,8 +388,11 @@ export function Connections({ snapshot, onClose, onSave, onRefresh }: Props) {
             모니터링 대상 <span>{uniqueTargets.length}</span>
           </h3>
           <span>
-            {selected.filter((target) => target.provider === provider).length}개
-            선택
+            {
+              selected.filter((target) => target.connectionId === connectionId)
+                .length
+            }
+            개 선택
           </span>
         </div>
         {mergedTargets.length > 0 && (
@@ -297,10 +409,12 @@ export function Connections({ snapshot, onClose, onSave, onRefresh }: Props) {
         <div className="target-list">
           {targets.length ? (
             targets.map((target) => (
-              <label key={target.id} className="target-option">
+              <label key={targetKey(target)} className="target-option">
                 <input
                   type="checkbox"
-                  checked={selected.some((item) => item.id === target.id)}
+                  checked={selected.some(
+                    (item) => targetKey(item) === targetKey(target),
+                  )}
                   onChange={() => toggle(target)}
                 />
                 <div>

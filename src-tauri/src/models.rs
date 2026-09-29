@@ -3,7 +3,12 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 const MAX_TARGETS: usize = 500;
+const MAX_ACCOUNTS: usize = 32;
 const MAX_TEXT_LEN: usize = 512;
+
+pub const LOCAL_GITHUB_ID: &str = "github:local";
+pub const LOCAL_VERCEL_ID: &str = "vercel:local";
+pub const AWS_DISCOVERY_ID: &str = "aws:local";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -11,6 +16,23 @@ pub enum Provider {
     Github,
     Vercel,
     Aws,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AccountMode {
+    Local,
+    Isolated,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    pub id: String,
+    pub provider: Provider,
+    pub label: String,
+    pub mode: AccountMode,
+    pub profile: Option<String>,
 }
 
 impl Provider {
@@ -49,6 +71,8 @@ pub enum Ownership {
 pub struct Target {
     pub id: String,
     pub provider: Provider,
+    #[serde(default)]
+    pub connection_id: String,
     pub name: String,
     pub description: Option<String>,
     #[serde(default)]
@@ -72,6 +96,8 @@ pub struct Settings {
     pub history_hours: u32,
     #[serde(default)]
     pub targets: Vec<Target>,
+    #[serde(default = "default_accounts")]
+    pub accounts: Vec<Account>,
 }
 
 impl Default for Settings {
@@ -80,8 +106,28 @@ impl Default for Settings {
             scope: Scope::Mine,
             history_hours: default_history_hours(),
             targets: Vec::new(),
+            accounts: default_accounts(),
         }
     }
+}
+
+fn default_accounts() -> Vec<Account> {
+    vec![
+        Account {
+            id: LOCAL_GITHUB_ID.into(),
+            provider: Provider::Github,
+            label: "GitHub (local)".into(),
+            mode: AccountMode::Local,
+            profile: None,
+        },
+        Account {
+            id: LOCAL_VERCEL_ID.into(),
+            provider: Provider::Vercel,
+            label: "Vercel (local)".into(),
+            mode: AccountMode::Local,
+            profile: None,
+        },
+    ]
 }
 
 fn default_history_hours() -> u32 {
@@ -89,6 +135,59 @@ fn default_history_hours() -> u32 {
 }
 
 impl Settings {
+    pub fn migrate_legacy(&mut self) -> bool {
+        let mut changed = false;
+        for required in default_accounts() {
+            if !self
+                .accounts
+                .iter()
+                .any(|account| account.id == required.id)
+            {
+                self.accounts.push(required);
+                changed = true;
+            }
+        }
+
+        let mut aws_profiles = HashMap::<String, String>::new();
+        for account in &self.accounts {
+            if account.provider == Provider::Aws {
+                if let Some(profile) = &account.profile {
+                    aws_profiles.insert(profile.clone(), account.id.clone());
+                }
+            }
+        }
+        for target in &mut self.targets {
+            if !target.connection_id.is_empty() {
+                continue;
+            }
+            target.connection_id = match target.provider {
+                Provider::Github => LOCAL_GITHUB_ID.into(),
+                Provider::Vercel => LOCAL_VERCEL_ID.into(),
+                Provider::Aws => {
+                    let Some(profile) = target.metadata.get("profile").cloned() else {
+                        continue;
+                    };
+                    aws_profiles
+                        .entry(profile.clone())
+                        .or_insert_with(|| {
+                            let id = format!("aws-{}", uuid::Uuid::new_v4());
+                            self.accounts.push(Account {
+                                id: id.clone(),
+                                provider: Provider::Aws,
+                                label: profile.clone(),
+                                mode: AccountMode::Local,
+                                profile: Some(profile),
+                            });
+                            id
+                        })
+                        .clone()
+                }
+            };
+            changed = true;
+        }
+        changed
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if !matches!(self.history_hours, 24 | 168) {
             return Err("History must be either 24 or 168 hours.".into());
@@ -96,12 +195,95 @@ impl Settings {
         if self.targets.len() > MAX_TARGETS {
             return Err(format!("At most {MAX_TARGETS} targets can be selected."));
         }
+        if self.accounts.len() > MAX_ACCOUNTS {
+            return Err(format!(
+                "At most {MAX_ACCOUNTS} accounts can be configured."
+            ));
+        }
+        let mut accounts = HashMap::new();
+        for account in &self.accounts {
+            account.validate()?;
+            if accounts.insert(account.id.as_str(), account).is_some() {
+                return Err("Each account must be unique.".into());
+            }
+        }
+        for required in [LOCAL_GITHUB_ID, LOCAL_VERCEL_ID] {
+            if !accounts.contains_key(required) {
+                return Err("The default local CLI accounts cannot be removed.".into());
+            }
+        }
         let mut ids = HashSet::new();
         for target in &self.targets {
             target.validate()?;
-            if !ids.insert((target.provider, target.id.as_str())) {
+            let account = accounts
+                .get(target.connection_id.as_str())
+                .ok_or_else(|| "A selected target references an unknown account.".to_owned())?;
+            if account.provider != target.provider {
+                return Err("A selected target references an account for another provider.".into());
+            }
+            if target.provider == Provider::Aws
+                && target.metadata.get("profile") != account.profile.as_ref()
+            {
+                return Err("An AWS target does not belong to its selected profile.".into());
+            }
+            if !ids.insert((
+                target.connection_id.as_str(),
+                target.provider,
+                target.id.as_str(),
+            )) {
                 return Err("Each selected target must be unique.".into());
             }
+        }
+        Ok(())
+    }
+}
+
+impl Account {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_text("Account ID", &self.id)?;
+        validate_text("Account label", &self.label)?;
+        if !self
+            .id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, ':' | '-'))
+        {
+            return Err("Account IDs contain unsupported characters.".into());
+        }
+        match self.provider {
+            Provider::Github | Provider::Vercel => {
+                if self.profile.is_some() {
+                    return Err("GitHub and Vercel accounts cannot use AWS profiles.".into());
+                }
+                let expected_local = match self.provider {
+                    Provider::Github => LOCAL_GITHUB_ID,
+                    Provider::Vercel => LOCAL_VERCEL_ID,
+                    Provider::Aws => unreachable!(),
+                };
+                if (self.mode == AccountMode::Local) != (self.id == expected_local) {
+                    return Err(
+                        "Only the built-in GitHub and Vercel accounts can use local CLI mode."
+                            .into(),
+                    );
+                }
+            }
+            Provider::Aws => {
+                if self.mode != AccountMode::Local {
+                    return Err("AWS profile accounts must use local mode.".into());
+                }
+                validate_text(
+                    "AWS profile",
+                    self.profile
+                        .as_deref()
+                        .ok_or_else(|| "AWS accounts require a profile.".to_owned())?,
+                )?;
+            }
+        }
+        if self.id == LOCAL_GITHUB_ID
+            && (self.provider != Provider::Github || self.mode != AccountMode::Local)
+            || self.id == LOCAL_VERCEL_ID
+                && (self.provider != Provider::Vercel || self.mode != AccountMode::Local)
+        {
+            return Err("The default local account is invalid.".into());
         }
         Ok(())
     }
@@ -154,6 +336,7 @@ pub enum ConnectionStatus {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Connection {
+    pub connection_id: String,
     pub provider: Provider,
     pub status: ConnectionStatus,
     pub account: Option<String>,
@@ -163,11 +346,13 @@ pub struct Connection {
 
 impl Connection {
     pub fn disconnected(
+        connection_id: impl Into<String>,
         provider: Provider,
         status: ConnectionStatus,
         message: impl Into<String>,
     ) -> Self {
         Self {
+            connection_id: connection_id.into(),
             provider,
             status,
             account: None,
@@ -182,6 +367,7 @@ impl Connection {
 pub struct Activity {
     pub id: String,
     pub provider: Provider,
+    pub connection_id: String,
     pub target_id: String,
     pub kind: String,
     pub title: String,
@@ -201,6 +387,7 @@ pub struct Activity {
 #[serde(rename_all = "camelCase")]
 pub struct Issue {
     pub provider: Provider,
+    pub connection_id: Option<String>,
     pub message: String,
     pub target_id: Option<String>,
 }
@@ -249,6 +436,7 @@ pub enum LoginState {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginStatus {
+    pub connection_id: String,
     pub provider: Provider,
     pub state: LoginState,
     pub message: String,
@@ -265,6 +453,7 @@ mod tests {
         let target = Target {
             id: "repo".into(),
             provider: Provider::Github,
+            connection_id: LOCAL_GITHUB_ID.into(),
             name: "Repository".into(),
             description: None,
             metadata: HashMap::new(),

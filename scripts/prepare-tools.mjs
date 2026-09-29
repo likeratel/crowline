@@ -14,6 +14,7 @@ import {
 import { arch, platform, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { buildIsolatedGithub, isolatedGithubName } from "./isolated-github.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryDirectory = resolve(scriptDirectory, "..");
@@ -300,6 +301,7 @@ async function copyLicenses({ ghRoot, nodeRoot, toolsDirectory }) {
       "# Bundled third-party tools",
       "",
       "- GitHub CLI is licensed under MIT; its license is `licenses/github-cli.txt`.",
+      "- gh-isolated is a crowline-modified GitHub CLI under the same MIT license. Source metadata is in `github-isolated-source.json`; the modified configuration source is `github-isolated-config.go.txt`.",
       "- Node.js is licensed under MIT; its license is `licenses/node.txt`.",
       "- Vercel CLI is licensed under Apache-2.0; its license is `licenses/vercel-cli.txt`.",
       "- License files shipped by Vercel CLI dependencies remain in `vercel/node_modules`.",
@@ -310,10 +312,11 @@ async function copyLicenses({ ghRoot, nodeRoot, toolsDirectory }) {
   );
 }
 
-async function assertBundledTools(toolsDirectory, names) {
+async function assertBundledTools(toolsDirectory, names, currentPlatform) {
   const paths = [
     stat(join(toolsDirectory, names.gh)),
     stat(join(toolsDirectory, names.node)),
+    stat(join(toolsDirectory, isolatedGithubName(currentPlatform))),
     stat(join(toolsDirectory, "vercel", "node_modules", "vercel", "dist", "index.js")),
   ];
   const entries = await Promise.all(paths);
@@ -364,9 +367,13 @@ export async function prepareTools({
     const nodeExecutable = join(nodeRoot, artifacts.node.executablePath);
     await copyExecutable(join(ghRoot, artifacts.gh.executablePath), join(toolsDirectory, names.gh), currentPlatform);
     await copyExecutable(nodeExecutable, join(toolsDirectory, names.node), currentPlatform);
+    await buildIsolatedGithub({
+      pin: lock.githubIsolated, scratchDirectory, toolsDirectory, currentPlatform,
+      currentArchitecture, run, runCaptured, download, extract, verifyFile,
+    });
     await installVercel({ lock, lockPath, toolsDirectory, nodeExecutable, nodeRoot, scratchDirectory });
     await copyLicenses({ ghRoot, nodeRoot, toolsDirectory });
-    await assertBundledTools(toolsDirectory, names);
+    await assertBundledTools(toolsDirectory, names, currentPlatform);
     await assertVercelApiCommand(toolsDirectory, names);
   } catch (error) {
     await resetToolsDirectory(toolsDirectory);

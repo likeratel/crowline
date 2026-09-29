@@ -3,7 +3,10 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::{
     login,
-    models::{Discovery, LoginStatus, Provider, Settings, Snapshot},
+    models::{
+        Account, Discovery, LoginStatus, Provider, Settings, Snapshot, AWS_DISCOVERY_ID,
+        LOCAL_GITHUB_ID, LOCAL_VERCEL_ID,
+    },
     providers::{aws, github, vercel},
     state::AppState,
 };
@@ -31,31 +34,82 @@ pub async fn refresh(app: AppHandle, state: State<'_, AppState>) -> Result<Snaps
 pub async fn discover(
     state: State<'_, AppState>,
     provider: Provider,
+    connection_id: Option<String>,
     profile: Option<String>,
     region: Option<String>,
 ) -> Result<Discovery, String> {
     validate_optional("AWS profile", profile.as_deref())?;
     validate_optional("AWS region", region.as_deref())?;
+    let connection_id = match (provider, connection_id) {
+        (Provider::Github, None) => LOCAL_GITHUB_ID.to_owned(),
+        (Provider::Vercel, None) => LOCAL_VERCEL_ID.to_owned(),
+        (Provider::Aws, None) => {
+            if profile.is_some() || region.is_some() {
+                return Err("Select an AWS connection before discovering resources.".into());
+            }
+            return aws::discover(None, None, AWS_DISCOVERY_ID).await;
+        }
+        (_, Some(connection_id)) => connection_id,
+    };
+    let account = state.account(&connection_id, provider).await?;
+    let cli = state.tools.invocation_for(&account)?;
     match provider {
-        Provider::Github => Ok(github::discover(state.tools.github.as_ref()).await),
-        Provider::Vercel => Ok(vercel::discover(state.tools.vercel.as_ref()).await),
-        Provider::Aws => aws::discover(profile, region).await,
+        Provider::Github => Ok(github::discover(cli.as_ref(), &connection_id).await),
+        Provider::Vercel => Ok(vercel::discover(cli.as_ref(), &connection_id).await),
+        Provider::Aws => {
+            let bound = account
+                .profile
+                .clone()
+                .ok_or_else(|| "The AWS connection has no profile.".to_owned())?;
+            if profile.as_ref().is_some_and(|value| value != &bound) {
+                return Err("The AWS profile does not match the selected connection.".into());
+            }
+            aws::discover(Some(bound), region, &connection_id).await
+        }
     }
+}
+
+#[tauri::command]
+pub async fn create_connection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: Provider,
+    label: String,
+    profile: Option<String>,
+) -> Result<Account, String> {
+    validate_optional("AWS profile", profile.as_deref())?;
+    state
+        .create_connection(provider, label, profile, &app)
+        .await
+}
+
+#[tauri::command]
+pub async fn remove_connection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> Result<Settings, String> {
+    state.remove_connection(&connection_id, &app).await
 }
 
 #[tauri::command]
 pub async fn begin_login(
     app: AppHandle,
     provider: Provider,
+    connection_id: String,
     profile: Option<String>,
 ) -> Result<LoginStatus, String> {
     validate_optional("AWS profile", profile.as_deref())?;
-    login::begin(&app, provider, profile).await
+    login::begin(&app, provider, connection_id, profile).await
 }
 
 #[tauri::command]
-pub async fn get_login_status(app: AppHandle, provider: Provider) -> Result<LoginStatus, String> {
-    Ok(login::get(&app, provider).await)
+pub async fn get_login_status(
+    app: AppHandle,
+    provider: Provider,
+    connection_id: String,
+) -> Result<LoginStatus, String> {
+    login::get(&app, provider, connection_id).await
 }
 
 #[tauri::command]
@@ -64,6 +118,16 @@ pub fn open_external(app: AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|_| "The link could not be opened.".to_owned())
+}
+
+#[tauri::command]
+pub fn hide_panel(app: AppHandle) -> Result<(), String> {
+    crate::windows::hide_panel(&app)
+}
+
+#[tauri::command]
+pub async fn open_dashboard(app: AppHandle) -> Result<(), String> {
+    crate::windows::open_dashboard(&app)
 }
 
 fn validate_optional(label: &str, value: Option<&str>) -> Result<(), String> {

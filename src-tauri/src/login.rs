@@ -17,27 +17,12 @@ const MAX_LOGIN_OUTPUT_BYTES: usize = 1024 * 1024;
 pub async fn begin(
     app: &AppHandle,
     provider: Provider,
+    connection_id: String,
     profile: Option<String>,
 ) -> Result<LoginStatus, String> {
     let state = app.state::<AppState>();
-    let invocation = match provider {
-        Provider::Github => state.tools.github.clone(),
-        Provider::Vercel => state.tools.vercel.clone(),
-        Provider::Aws => state.tools.aws.clone(),
-    }
-    .ok_or_else(|| format!("{} CLI was not found.", provider_name(provider)))?;
-    if provider == Provider::Aws && profile.is_none() {
-        return Err("Select an AWS profile before starting SSO sign-in.".into());
-    }
-
-    let mut statuses = state.login_statuses.lock().await;
-    if let Some(status) = statuses
-        .get(&provider)
-        .filter(|status| status.state == LoginState::Waiting)
-    {
-        return Ok(status.clone());
-    }
     let status = LoginStatus {
+        connection_id: connection_id.clone(),
         provider,
         state: LoginState::Waiting,
         message: format!(
@@ -47,47 +32,91 @@ pub async fn begin(
         url: None,
         code: None,
     };
-    statuses.insert(provider, status.clone());
-    drop(statuses);
+    let (account, status, should_start) = state
+        .register_login_attempt(&connection_id, provider, status)
+        .await?;
+    let profile = match login_profile(&account, profile) {
+        Ok(profile) => profile,
+        Err(error) => {
+            if should_start {
+                state.login_statuses.lock().await.remove(&connection_id);
+            }
+            return Err(error);
+        }
+    };
+    if !should_start {
+        return Ok(status);
+    }
+    let invocation = match state.tools.invocation_for(&account) {
+        Ok(Some(invocation)) => invocation,
+        Ok(None) => {
+            state.login_statuses.lock().await.remove(&connection_id);
+            return Err(format!("{} CLI was not found.", provider_name(provider)));
+        }
+        Err(error) => {
+            state.login_statuses.lock().await.remove(&connection_id);
+            return Err(error);
+        }
+    };
 
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        let final_status = run_login(app_handle.clone(), provider, profile, invocation).await;
+        let final_status = run_login(
+            app_handle.clone(),
+            provider,
+            connection_id.clone(),
+            profile,
+            invocation,
+        )
+        .await;
         let state = app_handle.state::<AppState>();
         state
-            .login_statuses
-            .lock()
-            .await
-            .insert(provider, final_status);
+            .publish_login_status_if_account_exists(&connection_id, provider, final_status)
+            .await;
     });
     Ok(status)
 }
 
-pub async fn get(app: &AppHandle, provider: Provider) -> LoginStatus {
-    app.state::<AppState>()
+pub async fn get(
+    app: &AppHandle,
+    provider: Provider,
+    connection_id: String,
+) -> Result<LoginStatus, String> {
+    let state = app.state::<AppState>();
+    state.account(&connection_id, provider).await?;
+    let status = state
         .login_statuses
         .lock()
         .await
-        .get(&provider)
+        .get(&connection_id)
         .cloned()
         .unwrap_or(LoginStatus {
+            connection_id,
             provider,
             state: LoginState::Error,
             message: "No sign-in attempt is active.".into(),
             url: None,
             code: None,
-        })
+        });
+    Ok(status)
 }
 
 async fn run_login(
     app: AppHandle,
     provider: Provider,
+    connection_id: String,
     profile: Option<String>,
     invocation: CliInvocation,
 ) -> LoginStatus {
     let _permit = match invocation.acquire_process().await {
         Ok(permit) => permit,
-        Err(_) => return login_error(provider, "The sign-in process could not be started."),
+        Err(_) => {
+            return login_error(
+                provider,
+                &connection_id,
+                "The sign-in process could not be started.",
+            )
+        }
     };
     let profile_arg = profile.unwrap_or_default();
     let args: Vec<&str> = match provider {
@@ -113,7 +142,13 @@ async fn run_login(
     };
     let mut child = match invocation.login_command(&args).spawn() {
         Ok(child) => child,
-        Err(_) => return login_error(provider, "The sign-in process could not be started."),
+        Err(_) => {
+            return login_error(
+                provider,
+                &connection_id,
+                "The sign-in process could not be started.",
+            )
+        }
     };
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -122,6 +157,7 @@ async fn run_login(
             BufReader::new(stream),
             app.clone(),
             provider,
+            connection_id.clone(),
         ))
     });
     let stderr_task = stderr.map(|stream| {
@@ -129,6 +165,7 @@ async fn run_login(
             BufReader::new(stream),
             app.clone(),
             provider,
+            connection_id.clone(),
         ))
     });
     let result = wait_for_login(&mut child, login_timeout()).await;
@@ -140,6 +177,7 @@ async fn run_login(
     }
     match result {
         Ok(true) => LoginStatus {
+            connection_id: connection_id.clone(),
             provider,
             state: LoginState::Complete,
             message: format!("{} sign-in completed.", provider_name(provider)),
@@ -148,10 +186,12 @@ async fn run_login(
         },
         Ok(false) => login_error(
             provider,
+            &connection_id,
             "Sign-in did not complete. Try again or sign in with the CLI directly.",
         ),
         Err(()) => login_error(
             provider,
+            &connection_id,
             "Sign-in timed out. Try again or sign in with the CLI directly.",
         ),
     }
@@ -172,6 +212,7 @@ async fn read_login_stream<R: AsyncBufRead + Unpin>(
     mut reader: R,
     app: AppHandle,
     provider: Provider,
+    connection_id: String,
 ) {
     let mut consumed = 0;
     let mut line = String::new();
@@ -190,10 +231,11 @@ async fn read_login_stream<R: AsyncBufRead + Unpin>(
         }
         let state = app.state::<AppState>();
         let mut statuses = state.login_statuses.lock().await;
-        if let Some(current) = statuses.get(&provider).cloned() {
+        if let Some(current) = statuses.get(&connection_id).cloned() {
             statuses.insert(
-                provider,
+                connection_id.clone(),
                 LoginStatus {
+                    connection_id: connection_id.clone(),
                     provider,
                     state: LoginState::Waiting,
                     message: format!(
@@ -253,14 +295,35 @@ fn allowed_login_url(value: &str, provider: Provider) -> bool {
             .is_some_and(|host| host.ends_with(".amazonaws.com") || host.ends_with(".awsapps.com"))
 }
 
-fn login_error(provider: Provider, message: &str) -> LoginStatus {
+fn login_error(provider: Provider, connection_id: &str, message: &str) -> LoginStatus {
     LoginStatus {
+        connection_id: connection_id.into(),
         provider,
         state: LoginState::Error,
         message: message.into(),
         url: None,
         code: None,
     }
+}
+
+fn login_profile(
+    account: &crate::models::Account,
+    requested: Option<String>,
+) -> Result<Option<String>, String> {
+    if account.provider != Provider::Aws {
+        if requested.is_some() {
+            return Err("Only AWS connections accept a profile.".into());
+        }
+        return Ok(None);
+    }
+    let bound = account
+        .profile
+        .clone()
+        .ok_or_else(|| "The AWS connection has no profile.".to_owned())?;
+    if requested.as_ref().is_some_and(|profile| profile != &bound) {
+        return Err("The AWS profile does not match the selected connection.".into());
+    }
+    Ok(Some(bound))
 }
 
 fn provider_name(provider: Provider) -> &'static str {
@@ -291,5 +354,21 @@ mod tests {
             "https://device.sso.us-east-1.amazonaws.com/",
             Provider::Aws
         ));
+    }
+
+    #[test]
+    fn login_profile_must_match_the_selected_account() {
+        let aws = crate::models::Account {
+            id: "aws-test".into(),
+            provider: Provider::Aws,
+            label: "AWS".into(),
+            mode: crate::models::AccountMode::Local,
+            profile: Some("engineering".into()),
+        };
+        assert_eq!(
+            login_profile(&aws, None).expect("use bound profile"),
+            Some("engineering".into())
+        );
+        assert!(login_profile(&aws, Some("production".into())).is_err());
     }
 }

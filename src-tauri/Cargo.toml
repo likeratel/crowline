@@ -2,6 +2,8 @@
 name = "crowline"
 version = "0.1.0"
 description = "Personal deployment monitoring for the menu bar and system tray"
+license = "MIT"
+repository = "https://github.com/likeratel/crowline"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -23,13 +25,15 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 aws-config = "1"
-aws-sdk-cloudformation = "1"
-aws-sdk-ecs = "1"
-aws-sdk-sts = "1"
+aws-sdk-cloudformation = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-ecs = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-sts = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
 aws-types = "1"
 chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
 url = "2"
+uuid = { version = "1", features = ["v4"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

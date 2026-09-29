@@ -1,5 +1,14 @@
 {
   "schemaVersion": 1,
+  "githubIsolated": {
+    "version": "2.65.0-crowline.1",
+    "goVersion": "1.26.8",
+    "sourceUrl": "https://codeload.github.com/cli/cli/tar.gz/refs/tags/v2.65.0",
+    "sourceSha256": "af026f1b0368b1444a67a941f179ddce7e97333881ec0bbcb49fed29f4151241",
+    "rootDirectory": "cli-2.65.0",
+    "license": "MIT",
+    "patch": "scripts/isolated-github.mjs"
+  },
   "githubCli": {
     "version": "2.65.0",
     "license": "MIT",

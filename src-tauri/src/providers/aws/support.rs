@@ -15,6 +15,7 @@ use std::{
 };
 
 pub(super) fn cloudformation_target(
+    connection_id: &str,
     profile: &str,
     region: &str,
     stack: &str,
@@ -23,6 +24,7 @@ pub(super) fn cloudformation_target(
     Target {
         id: target_id(CLOUD_FORMATION_STACK, profile, region, stack),
         provider: AWS_PROVIDER,
+        connection_id: connection_id.into(),
         name: format!("CloudFormation: {stack}"),
         description: Some(format!("CloudFormation stack in {region}")),
         metadata: [
@@ -38,6 +40,7 @@ pub(super) fn cloudformation_target(
 }
 
 pub(super) fn ecs_target(
+    connection_id: &str,
     profile: &str,
     region: &str,
     cluster: &str,
@@ -47,6 +50,7 @@ pub(super) fn ecs_target(
     Target {
         id: target_id(ECS_SERVICE, profile, region, service),
         provider: AWS_PROVIDER,
+        connection_id: connection_id.into(),
         name: format!("ECS: {}/{}", cluster_name(cluster), service_name),
         description: Some(format!("ECS service in {region}")),
         metadata: HashMap::from([
@@ -67,6 +71,7 @@ pub(super) fn push_target(targets: &mut Vec<Target>, target: Target, issues: &mu
         .any(|issue| issue.message.contains("target limit"))
     {
         issues.push(partial_issue(
+            &target.connection_id,
             "AWS discovery reached its target limit; more resources may be available.",
         ));
     }
@@ -239,22 +244,24 @@ pub(super) fn is_safe_region(value: &str) -> bool {
 }
 
 pub(super) fn disconnected_discovery(
+    connection_id: &str,
     aws_profiles: Vec<String>,
     status: ConnectionStatus,
     message: impl Into<String>,
 ) -> Discovery {
     let message = message.into();
     Discovery {
-        connection: Connection::disconnected(AWS_PROVIDER, status, message.clone()),
+        connection: Connection::disconnected(connection_id, AWS_PROVIDER, status, message.clone()),
         targets: Vec::new(),
         aws_profiles,
-        issues: vec![partial_issue(message)],
+        issues: vec![partial_issue(connection_id, message)],
     }
 }
 
-pub(super) fn partial_issue(message: impl Into<String>) -> Issue {
+pub(super) fn partial_issue(connection_id: &str, message: impl Into<String>) -> Issue {
     Issue {
         provider: AWS_PROVIDER,
+        connection_id: Some(connection_id.into()),
         message: message.into(),
         target_id: None,
     }
@@ -263,6 +270,7 @@ pub(super) fn partial_issue(message: impl Into<String>) -> Issue {
 pub(super) fn target_issue(target: &Target, message: impl Into<String>) -> Issue {
     Issue {
         provider: AWS_PROVIDER,
+        connection_id: Some(target.connection_id.clone()),
         message: message.into(),
         target_id: Some(target.id.clone()),
     }

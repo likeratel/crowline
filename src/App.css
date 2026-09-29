@@ -1,5 +1,6 @@
 @import url("./styles/connections.css");
 :root {
+  color-scheme: dark;
   font-family:
     Inter,
     -apple-system,
@@ -8,22 +9,22 @@
     "Apple SD Gothic Neo",
     "Malgun Gothic",
     sans-serif;
-  color: #25332d;
-  background: #f8faf8;
+  color: #e5e7eb;
+  background: #0d0e10;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   font-size: 13px;
-  --surface: #fff;
-  --canvas: #f8faf8;
-  --sidebar: #f0f3ef;
-  --border: #e1e7df;
-  --text: #25332d;
-  --muted: #778278;
-  --green: #287451;
-  --soft: #e9f1e7;
-  --hover: #f4f7f2;
-  --accent: #d9edb3;
+  --surface: #17191d;
+  --canvas: #0d0e10;
+  --sidebar: #090a0c;
+  --border: #2c2f35;
+  --text: #e5e7eb;
+  --muted: #9298a3;
+  --focus: #c5cad3;
+  --soft: #22252b;
+  --hover: #202329;
+  --accent: #c5cad3;
 }
 * {
   box-sizing: border-box;
@@ -68,7 +69,7 @@ button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--green);
+  outline: 2px solid var(--focus);
 }
 button svg {
   flex-shrink: 0;
@@ -109,18 +110,20 @@ p {
   place-items: center;
   width: 48px;
   height: 44px;
-  background: #e4eddf;
+  background: #a4a8b0;
   border-radius: 12px;
 }
 .brand-mark img {
   width: 46px;
   height: 46px;
   object-fit: contain;
+  filter: grayscale(1);
 }
 .boot-logo {
+  filter: grayscale(1);
   width: 144px;
   height: 144px;
-  background: #e4eddf;
+  background: #a4a8b0;
   border-radius: 32px;
 }
 .brand small {
@@ -177,7 +180,7 @@ p {
   border-radius: 7px;
   text-align: left;
   margin-bottom: 5px;
-  color: #657167;
+  color: #a1a7b1;
   font-size: 12px;
   transition: background 0.15s;
 }
@@ -185,8 +188,8 @@ p {
   background: var(--border);
 }
 .nav-item.selected {
-  background: #e0e8da;
-  color: #314831;
+  background: #24272d;
+  color: #f0f1f4;
   font-weight: 650;
 }
 .nav-count {
@@ -237,7 +240,7 @@ p {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #6e9c59;
+  background: #a5afb9;
   flex-shrink: 0;
 }
 .live-dot.amber {
@@ -332,14 +335,14 @@ p {
   font-weight: 400;
 }
 .active-summary {
-  background: #eef4e7;
-  border-color: #dce7d2;
+  background: #1c1f24;
+  border-color: #393e47;
 }
 .active-summary > span {
-  color: #638044;
+  color: #c4c9d2;
 }
 .connection-summary:hover {
-  border-color: #9cae94;
+  border-color: #606875;
 }
 .connection-summary > span svg:last-child {
   margin-left: auto;
@@ -357,7 +360,7 @@ p {
   display: block;
   width: 3px;
   height: 8px;
-  background: #9cbb7c;
+  background: #929caa;
   border-radius: 4px;
 }
 .summary-pulse i:nth-child(2),
@@ -375,7 +378,7 @@ p {
 .segmented {
   display: flex;
   padding: 3px;
-  background: #e9eee7;
+  background: #090a0c;
   border-radius: 7px;
   flex-shrink: 0;
 }
@@ -388,7 +391,7 @@ p {
 .segmented button[aria-pressed="true"] {
   background: var(--surface);
   color: var(--text);
-  box-shadow: 0 1px 3px #203a2712;
+  box-shadow: 0 1px 3px #00000040;
   font-weight: 600;
 }
 .search-box {
@@ -413,7 +416,7 @@ p {
   min-width: 0;
 }
 .search-box:focus-within {
-  border-color: var(--green);
+  border-color: var(--focus);
 }
 .search-box input::placeholder {
   color: var(--muted);
@@ -445,7 +448,7 @@ p {
   display: flex;
   align-items: center;
   gap: 2px;
-  color: var(--green);
+  color: var(--focus);
 }
 .section-heading {
   display: flex;
@@ -503,9 +506,9 @@ p {
   color: var(--text);
 }
 .service-icon.aws {
-  color: #bd8745;
-  background: #fbf5eb;
-  border-color: #f2e5cd;
+  color: #c0ad8f;
+  background: #27231f;
+  border-color: #3e362c;
 }
 .activity-details {
   flex: 1;
@@ -558,27 +561,27 @@ p {
   gap: 5px;
   padding: 4px 7px;
   border-radius: 5px;
-  background: #f0f2ef;
-  color: #7b8479;
+  background: #292c32;
+  color: #a7adb7;
   font-size: 10px;
   white-space: nowrap;
 }
 .status.running {
-  background: #eff3df;
-  color: #7a8836;
+  background: #29313c;
+  color: #bbcce2;
 }
 .status.success {
-  background: #eaf4ec;
-  color: #4e875f;
+  background: #1d2d28;
+  color: #9bbda9;
 }
 .status.failed {
-  background: #fcecea;
-  color: #b66459;
+  background: #322323;
+  color: #d4a29b;
 }
 .status.waiting,
 .status.queued {
-  background: #fff3dc;
-  color: #9a7a40;
+  background: #302b22;
+  color: #c9b38c;
 }
 .activity-time {
   display: block;
@@ -599,7 +602,7 @@ p {
   font-size: 11px;
 }
 .empty-section svg {
-  color: #91a087;
+  color: #8c939e;
 }
 .main-footer {
   display: flex;
@@ -621,7 +624,7 @@ p {
   align-items: center;
   gap: 7px;
   background: var(--soft);
-  color: #5c7550;
+  color: #a0a7b2;
   padding: 9px 11px;
   margin: -20px 0 21px;
   border-radius: 6px;
@@ -645,9 +648,9 @@ p {
   flex-shrink: 0;
 }
 .notice.warning {
-  background: #faf2e5;
-  border-color: #ecdfc6;
-  color: #98723f;
+  background: #28241e;
+  border-color: #44392b;
+  color: #c5af88;
 }
 .notice > .icon-button {
   margin-left: auto;
@@ -664,7 +667,7 @@ p {
   place-items: center;
   width: 86px;
   height: 86px;
-  color: #729552;
+  color: #a8b1be;
   border: 1px solid var(--border);
   outline: 1px solid var(--border);
   outline-offset: 10px;
@@ -698,7 +701,7 @@ p {
   gap: 20px;
 }
 .boot > svg {
-  color: var(--green);
+  color: var(--focus);
 }
 .boot p {
   color: var(--muted);

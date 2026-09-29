@@ -69,8 +69,8 @@ fn default_attempt() -> u64 {
     1
 }
 
-pub async fn discover(cli: Option<&CliInvocation>) -> Discovery {
-    let connection = connection(cli).await;
+pub async fn discover(cli: Option<&CliInvocation>, connection_id: &str) -> Discovery {
+    let connection = connection(cli, connection_id).await;
     let Some(cli) = cli.filter(|_| connection.status == ConnectionStatus::Connected) else {
         return Discovery {
             connection,
@@ -81,11 +81,12 @@ pub async fn discover(cli: Option<&CliInvocation>) -> Discovery {
     };
     let (repositories, truncated) = match discover_repositories(cli).await {
         Ok(result) => result,
-        Err(error) => return failed_discovery(error, connection.cli_version),
+        Err(error) => return failed_discovery(error, connection.cli_version, connection_id),
     };
     let issues = truncated
         .then(|| Issue {
             provider: Provider::Github,
+            connection_id: Some(connection_id.into()),
             message: format!(
                 "GitHub repository discovery reached the {MAX_REPOSITORY_PAGES}-page safety limit. Some repositories may be missing."
             ),
@@ -95,15 +96,19 @@ pub async fn discover(cli: Option<&CliInvocation>) -> Discovery {
         .collect();
     Discovery {
         connection,
-        targets: repositories.into_iter().map(repository_target).collect(),
+        targets: repositories
+            .into_iter()
+            .map(|repository| repository_target(repository, connection_id))
+            .collect(),
         aws_profiles: Vec::new(),
         issues,
     }
 }
 
-pub async fn connection(cli: Option<&CliInvocation>) -> Connection {
+pub async fn connection(cli: Option<&CliInvocation>, connection_id: &str) -> Connection {
     let Some(cli) = cli else {
         return Connection::disconnected(
+            connection_id,
             Provider::Github,
             ConnectionStatus::MissingCli,
             "GitHub CLI 2.65 or newer was not found.",
@@ -112,13 +117,14 @@ pub async fn connection(cli: Option<&CliInvocation>) -> Connection {
     let version = cli.version().await;
     match github_json::<User>(cli, "user").await {
         Ok(user) => Connection {
+            connection_id: connection_id.into(),
             provider: Provider::Github,
             status: ConnectionStatus::Connected,
             account: Some(user.login),
             message: None,
             cli_version: version,
         },
-        Err(error) => failed_discovery(error, version).connection,
+        Err(error) => failed_discovery(error, version, connection_id).connection,
     }
 }
 
@@ -139,10 +145,11 @@ async fn discover_repositories(cli: &CliInvocation) -> Result<(Vec<Repository>, 
     Ok((repositories, full_last_page))
 }
 
-fn repository_target(repository: Repository) -> Target {
+fn repository_target(repository: Repository, connection_id: &str) -> Target {
     Target {
         id: repository.full_name,
         provider: Provider::Github,
+        connection_id: connection_id.into(),
         name: repository.name,
         description: repository.description,
         metadata: HashMap::from([
@@ -152,7 +159,7 @@ fn repository_target(repository: Repository) -> Target {
     }
 }
 
-fn failed_discovery(error: CliError, version: Option<String>) -> Discovery {
+fn failed_discovery(error: CliError, version: Option<String>, connection_id: &str) -> Discovery {
     let status = match error {
         CliError::SignedOut => ConnectionStatus::SignedOut,
         CliError::Unavailable => ConnectionStatus::MissingCli,
@@ -160,6 +167,7 @@ fn failed_discovery(error: CliError, version: Option<String>) -> Discovery {
     };
     Discovery {
         connection: Connection {
+            connection_id: connection_id.into(),
             provider: Provider::Github,
             status,
             account: None,
@@ -177,12 +185,17 @@ pub async fn collect(
     targets: &[Target],
     history_hours: u32,
     account: Option<&str>,
+    connection_id: &str,
 ) -> (Vec<Activity>, Vec<Issue>) {
+    if targets.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
     let Some(cli) = cli else {
         return (
             Vec::new(),
             vec![Issue {
                 provider: Provider::Github,
+                connection_id: Some(connection_id.into()),
                 message:
                     "GitHub CLI was not found. Cached GitHub activity is shown when available."
                         .into(),
@@ -200,6 +213,7 @@ pub async fn collect(
                 if truncated {
                     issues.push(Issue {
                         provider: Provider::Github,
+                        connection_id: Some(connection_id.into()),
                         message: format!(
                             "GitHub history for {} reached the {MAX_RUN_PAGES}-page safety limit. Recent results are partial.",
                             target.name
@@ -210,6 +224,7 @@ pub async fn collect(
             }
             Err(error) => issues.push(Issue {
                 provider: Provider::Github,
+                connection_id: Some(connection_id.into()),
                 message: error.user_message("GitHub"),
                 target_id: Some(target.id.clone()),
             }),
@@ -271,7 +286,15 @@ async fn github_json<T: for<'de> Deserialize<'de>>(
     cli: &CliInvocation,
     endpoint: &str,
 ) -> Result<T, CliError> {
-    cli.json(&["api", "--method", "GET", endpoint]).await
+    cli.json(&[
+        "api",
+        "--hostname",
+        "github.com",
+        "--method",
+        "GET",
+        endpoint,
+    ])
+    .await
 }
 
 fn map_run(run: WorkflowRun, target: &Target, account: Option<&str>) -> Activity {
@@ -291,6 +314,7 @@ fn map_run(run: WorkflowRun, target: &Target, account: Option<&str>) -> Activity
     Activity {
         id: format!("github:{}:{}", run.id, run.run_attempt),
         provider: Provider::Github,
+        connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
         kind: run.event,
         title: run
@@ -349,6 +373,13 @@ fn validate_repository_id(value: &str) -> Result<(), ()> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn unused_provider_never_requires_authentication() {
+        let (activities, issues) = collect(None, &[], 24, None, "github:local").await;
+        assert!(activities.is_empty());
+        assert!(issues.is_empty());
+    }
+
     fn test_run(actor: &str, triggering_actor: Option<&str>) -> WorkflowRun {
         WorkflowRun {
             id: 10,
@@ -376,6 +407,7 @@ mod tests {
         Target {
             id: "acme/rocket".into(),
             provider: Provider::Github,
+            connection_id: "github:local".into(),
             name: "rocket".into(),
             description: None,
             metadata: HashMap::new(),

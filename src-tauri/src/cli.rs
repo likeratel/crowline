@@ -1,6 +1,7 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     env,
+    ffi::OsString,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -14,6 +15,11 @@ use tokio::{
     time::timeout,
 };
 
+use crate::models::{Account, AccountMode, Provider};
+
+const GITHUB_KEYRING_NAMESPACE: &str = "CROWLINE_GH_KEYRING_NAMESPACE";
+const ISOLATED_GITHUB_VERSION_MARKER: &str = "2.65.0-crowline.1";
+
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const PROCESS_GATE_TIMEOUT: Duration = Duration::from_secs(3);
@@ -24,6 +30,8 @@ pub struct CliInvocation {
     program: PathBuf,
     prefix_args: Vec<String>,
     process_gate: std::sync::Arc<Semaphore>,
+    environment: Vec<(OsString, OsString)>,
+    removed_environment: Vec<OsString>,
 }
 
 impl CliInvocation {
@@ -32,6 +40,8 @@ impl CliInvocation {
             program,
             prefix_args: Vec::new(),
             process_gate,
+            environment: Vec::new(),
+            removed_environment: Vec::new(),
         }
     }
 
@@ -44,6 +54,8 @@ impl CliInvocation {
             program: node,
             prefix_args: vec![script.to_string_lossy().into_owned()],
             process_gate,
+            environment: Vec::new(),
+            removed_environment: Vec::new(),
         }
     }
 
@@ -73,6 +85,10 @@ impl CliInvocation {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        for name in &self.removed_environment {
+            command.env_remove(name);
+        }
+        command.envs(self.environment.iter().cloned());
 
         #[cfg(windows)]
         command.creation_flags(0x08000000);
@@ -108,6 +124,10 @@ impl CliInvocation {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        for name in &self.removed_environment {
+            command.env_remove(name);
+        }
+        command.envs(self.environment.iter().cloned());
         #[cfg(windows)]
         command.creation_flags(0x08000000);
         command
@@ -192,21 +212,29 @@ impl CliError {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug)]
 pub struct Toolchain {
     pub github: Option<CliInvocation>,
+    github_isolated: Option<CliInvocation>,
     pub vercel: Option<CliInvocation>,
     pub aws: Option<CliInvocation>,
+    account_config_root: PathBuf,
+    account_gates: std::sync::Mutex<HashMap<String, std::sync::Arc<Semaphore>>>,
 }
 
 impl Toolchain {
-    pub async fn discover(resource_dir: Option<&Path>) -> Self {
+    pub async fn discover(resource_dir: Option<&Path>, app_data_dir: &Path) -> Self {
         let github_gate = std::sync::Arc::new(Semaphore::new(1));
         let system_github =
             find_executable(&["gh"]).map(|path| CliInvocation::direct(path, github_gate.clone()));
         let bundled_github = bundled_executable(resource_dir, "gh")
             .map(|path| CliInvocation::direct(path, github_gate));
         let github = select_supported(system_github, bundled_github, (2, 65, 0)).await;
+        let isolated_github_gate = std::sync::Arc::new(Semaphore::new(1));
+        let bundled_isolated_github = bundled_executable(resource_dir, "gh-isolated")
+            .map(|path| CliInvocation::direct(path, isolated_github_gate));
+        let github_isolated =
+            select_version_marker(bundled_isolated_github, ISOLATED_GITHUB_VERSION_MARKER).await;
 
         let vercel_gate = std::sync::Arc::new(Semaphore::new(1));
         let system_vercel = find_executable(&["vercel"])
@@ -224,10 +252,120 @@ impl Toolchain {
             .map(|path| CliInvocation::direct(path, std::sync::Arc::new(Semaphore::new(1))));
         Self {
             github,
+            github_isolated,
             vercel,
             aws,
+            account_config_root: app_data_dir.join("accounts"),
+            account_gates: std::sync::Mutex::new(HashMap::new()),
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn unavailable_for_test(app_data_dir: &Path) -> Self {
+        Self {
+            github: None,
+            github_isolated: None,
+            vercel: None,
+            aws: None,
+            account_config_root: app_data_dir.join("accounts"),
+            account_gates: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn invocation_for(&self, account: &Account) -> Result<Option<CliInvocation>, String> {
+        self.prepare_account(account)?;
+        let base = match (account.provider, account.mode) {
+            (Provider::Github, AccountMode::Isolated) => {
+                Some(self.github_isolated.as_ref().ok_or_else(|| {
+                    "The bundled isolated GitHub helper is unavailable or has an unsupported version."
+                        .to_owned()
+                })?)
+            }
+            (Provider::Github, AccountMode::Local) => self.github.as_ref(),
+            (Provider::Vercel, _) => self.vercel.as_ref(),
+            (Provider::Aws, _) => self.aws.as_ref(),
+        };
+        let Some(base) = base else {
+            return Ok(None);
+        };
+        let gate = {
+            let mut gates = self
+                .account_gates
+                .lock()
+                .map_err(|_| "CLI account coordination is unavailable.".to_owned())?;
+            gates
+                .entry(account.id.clone())
+                .or_insert_with(|| std::sync::Arc::new(Semaphore::new(1)))
+                .clone()
+        };
+        let mut invocation = base.clone();
+        invocation.process_gate = gate;
+        invocation.removed_environment = provider_environment(account.provider)
+            .iter()
+            .map(OsString::from)
+            .collect();
+
+        if account.mode == AccountMode::Isolated {
+            let directory = self.account_config_root.join(&account.id);
+            match account.provider {
+                Provider::Github => invocation.environment.extend([
+                    (OsString::from("GH_CONFIG_DIR"), directory.into_os_string()),
+                    (
+                        OsString::from(GITHUB_KEYRING_NAMESPACE),
+                        OsString::from(&account.id),
+                    ),
+                ]),
+                Provider::Vercel => invocation.prefix_args.extend([
+                    "--global-config".into(),
+                    directory.to_string_lossy().into_owned(),
+                ]),
+                Provider::Aws => return Err("AWS accounts cannot use isolated CLI mode.".into()),
+            }
+        }
+        Ok(Some(invocation))
+    }
+
+    pub fn prepare_account(&self, account: &Account) -> Result<(), String> {
+        account.validate()?;
+        if account.mode == AccountMode::Isolated {
+            create_private_directory(&self.account_config_root.join(&account.id))?;
+        }
+        Ok(())
+    }
+}
+
+fn provider_environment(provider: Provider) -> &'static [&'static str] {
+    match provider {
+        Provider::Github => &[
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "GH_ENTERPRISE_TOKEN",
+            "GITHUB_ENTERPRISE_TOKEN",
+            "GH_HOST",
+            GITHUB_KEYRING_NAMESPACE,
+        ],
+        Provider::Vercel => &[
+            "VERCEL_TOKEN",
+            "VERCEL_TEAM_ID",
+            "VERCEL_ORG_ID",
+            "VERCEL_PROJECT_ID",
+            "VERCEL_SCOPE",
+        ],
+        Provider::Aws => &[],
+    }
+}
+
+fn create_private_directory(path: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(path)
+        .map_err(|_| "The isolated CLI configuration directory could not be created.".to_owned())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).map_err(|_| {
+            "The isolated CLI configuration directory could not be secured.".to_owned()
+        })?;
+    }
+    Ok(())
 }
 
 async fn select_supported(
@@ -246,6 +384,24 @@ async fn select_supported(
         }
     }
     None
+}
+
+async fn select_version_marker(
+    candidate: Option<CliInvocation>,
+    required_marker: &str,
+) -> Option<CliInvocation> {
+    let candidate = candidate?;
+    candidate
+        .version()
+        .await
+        .is_some_and(|version| has_version_marker(&version, required_marker))
+        .then_some(candidate)
+}
+
+fn has_version_marker(version: &str, required_marker: &str) -> bool {
+    version
+        .split_ascii_whitespace()
+        .any(|token| token == required_marker)
 }
 
 fn parse_version(value: &str) -> Option<(u32, u32, u32)> {
@@ -350,5 +506,101 @@ mod tests {
         );
         assert_eq!(parse_version("Vercel CLI 50.29.0"), Some((50, 29, 0)));
         assert_eq!(parse_version("unknown"), None);
+        assert!(has_version_marker(
+            "gh version 2.65.0-crowline.1",
+            ISOLATED_GITHUB_VERSION_MARKER
+        ));
+        assert!(!has_version_marker(
+            "gh version 2.65.0-crowline.10",
+            ISOLATED_GITHUB_VERSION_MARKER
+        ));
+    }
+
+    #[test]
+    fn account_invocations_isolate_credentials_and_require_patched_github() {
+        let root = std::env::temp_dir().join(format!("crowline-cli-test-{}", std::process::id()));
+        let mut toolchain = Toolchain {
+            github: Some(CliInvocation::direct(
+                PathBuf::from("gh"),
+                std::sync::Arc::new(Semaphore::new(1)),
+            )),
+            github_isolated: Some(CliInvocation::direct(
+                PathBuf::from("gh-isolated"),
+                std::sync::Arc::new(Semaphore::new(1)),
+            )),
+            vercel: Some(CliInvocation::direct(
+                PathBuf::from("vercel"),
+                std::sync::Arc::new(Semaphore::new(1)),
+            )),
+            aws: None,
+            account_config_root: root.clone(),
+            account_gates: std::sync::Mutex::new(HashMap::new()),
+        };
+        let local_github = toolchain
+            .invocation_for(&Account {
+                id: crate::models::LOCAL_GITHUB_ID.into(),
+                provider: Provider::Github,
+                label: "Local".into(),
+                mode: AccountMode::Local,
+                profile: None,
+            })
+            .expect("configure local GitHub")
+            .expect("local GitHub CLI");
+        assert_eq!(local_github.program, PathBuf::from("gh"));
+        assert!(local_github
+            .removed_environment
+            .contains(&OsString::from(GITHUB_KEYRING_NAMESPACE)));
+        assert!(local_github
+            .environment
+            .iter()
+            .all(|(name, _)| name != GITHUB_KEYRING_NAMESPACE));
+
+        let isolated_github = toolchain
+            .invocation_for(&Account {
+                id: "github-test".into(),
+                provider: Provider::Github,
+                label: "Work".into(),
+                mode: AccountMode::Isolated,
+                profile: None,
+            })
+            .expect("configure isolated GitHub")
+            .expect("patched GitHub CLI");
+        assert_eq!(isolated_github.program, PathBuf::from("gh-isolated"));
+        assert!(isolated_github.environment.contains(&(
+            OsString::from(GITHUB_KEYRING_NAMESPACE),
+            OsString::from("github-test")
+        )));
+        assert!(isolated_github
+            .environment
+            .iter()
+            .any(|(name, value)| name == "GH_CONFIG_DIR" && value == &root.join("github-test")));
+
+        let vercel = toolchain
+            .invocation_for(&Account {
+                id: "vercel-test".into(),
+                provider: Provider::Vercel,
+                label: "Company".into(),
+                mode: AccountMode::Isolated,
+                profile: None,
+            })
+            .expect("configure Vercel")
+            .expect("Vercel CLI");
+        assert!(vercel
+            .removed_environment
+            .contains(&OsString::from("VERCEL_TOKEN")));
+        assert_eq!(vercel.prefix_args[0], "--global-config");
+
+        toolchain.github_isolated = None;
+        let error = toolchain
+            .invocation_for(&Account {
+                id: "github-missing".into(),
+                provider: Provider::Github,
+                label: "Missing".into(),
+                mode: AccountMode::Isolated,
+                profile: None,
+            })
+            .expect_err("unpatched fallback must not be used");
+        assert!(error.contains("bundled isolated GitHub helper"));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

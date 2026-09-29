@@ -28,11 +28,13 @@ import { ActivityList } from "./components/ActivityList";
 import { Connections } from "./components/Connections";
 import { ProviderIcon } from "./components/ProviderIcon";
 import { useMonitor } from "./useMonitor";
+import { AccountFilter } from "./components/AccountFilter";
 import "./App.css";
 
 export default function App() {
   const monitor = useMonitor();
   const [provider, setProvider] = useState<Provider | "all">("all");
+  const [accountId, setAccountId] = useState("all");
   const [search, setSearch] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [, tick] = useState(0);
@@ -56,7 +58,20 @@ export default function App() {
         )}
       </main>
     );
-  const activities = visibleActivities(snapshot, provider, search);
+  const selectedAccount = snapshot.settings.accounts.some(
+    (account) =>
+      account.id === accountId &&
+      (provider === "all" || provider === account.provider),
+  )
+    ? accountId
+    : "all";
+  const activities = visibleActivities(
+    snapshot,
+    provider,
+    search,
+    undefined,
+    selectedAccount,
+  );
   const active = activities.filter(isActive);
   const completed = activities.filter(
     (activity) => !isActive(activity) && activity.status !== "unknown",
@@ -160,12 +175,12 @@ export default function App() {
           <div>
             <div className="eyebrow">
               <span className="live-dot" />
-              YOUR RELEASES, IN SIGHT
+              연결된 프로젝트
             </div>
             <h1>
               {provider === "all" ? "배포 현황" : PROVIDER_NAMES[provider]}
             </h1>
-            <p>여러 곳의 실행을 한눈에. 배포의 다음 순간을 확인하세요.</p>
+            <p>선택한 계정의 실행 상태와 최근 배포를 확인하세요.</p>
           </div>
           <button
             className="button refresh-button"
@@ -218,7 +233,7 @@ export default function App() {
             <div>
               <strong>
                 {connected}
-                <em>/ 3</em>
+                <em>/ {snapshot.settings.accounts.length}</em>
               </strong>
               <small>{snapshot.settings.targets.length}개 대상 모니터링</small>
             </div>
@@ -259,6 +274,13 @@ export default function App() {
               </button>
             )}
           </label>
+          <AccountFilter
+            snapshot={snapshot}
+            provider={provider}
+            value={selectedAccount}
+            onChange={setAccountId}
+            className="period-select"
+          />
           <select
             className="period-select"
             aria-label="조회 기간"

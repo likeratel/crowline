@@ -93,8 +93,8 @@ struct ProjectContext {
     scope_slug: String,
 }
 
-pub async fn discover(cli: Option<&CliInvocation>) -> Discovery {
-    let connection = connection(cli).await;
+pub async fn discover(cli: Option<&CliInvocation>, connection_id: &str) -> Discovery {
+    let connection = connection(cli, connection_id).await;
     let Some(cli) = cli.filter(|_| connection.status == ConnectionStatus::Connected) else {
         return Discovery {
             connection,
@@ -105,7 +105,7 @@ pub async fn discover(cli: Option<&CliInvocation>) -> Discovery {
     };
     let (teams, teams_truncated) = match discover_teams(cli).await {
         Ok(teams) => teams,
-        Err(error) => return failed_discovery(error, connection.cli_version),
+        Err(error) => return failed_discovery(error, connection.cli_version, connection_id),
     };
     // Current Vercel accounts, including Hobby accounts, keep projects in teams.
     // The CLI explicitly rejects a user's personal username as --scope.
@@ -115,6 +115,7 @@ pub async fn discover(cli: Option<&CliInvocation>) -> Discovery {
     if teams_truncated {
         issues.push(Issue {
             provider: Provider::Vercel,
+            connection_id: Some(connection_id.into()),
             message: format!(
                 "Vercel team discovery reached the {MAX_TEAM_PAGES}-page safety limit."
             ),
@@ -124,10 +125,15 @@ pub async fn discover(cli: Option<&CliInvocation>) -> Discovery {
     for (scope_id, scope_slug) in contexts {
         match discover_projects(cli, scope_id.as_deref(), &scope_slug).await {
             Ok((projects, truncated)) => {
-                targets.extend(projects.into_iter().map(project_target));
+                targets.extend(
+                    projects
+                        .into_iter()
+                        .map(|project| project_target(project, connection_id)),
+                );
                 if truncated {
                     issues.push(Issue {
                         provider: Provider::Vercel,
+                        connection_id: Some(connection_id.into()),
                         message: format!(
                             "Vercel project discovery for {scope_slug} reached the {MAX_PROJECT_PAGES}-page safety limit."
                         ),
@@ -137,6 +143,7 @@ pub async fn discover(cli: Option<&CliInvocation>) -> Discovery {
             }
             Err(error) => issues.push(Issue {
                 provider: Provider::Vercel,
+                connection_id: Some(connection_id.into()),
                 message: error.user_message("Vercel"),
                 target_id: None,
             }),
@@ -150,9 +157,10 @@ pub async fn discover(cli: Option<&CliInvocation>) -> Discovery {
     }
 }
 
-pub async fn connection(cli: Option<&CliInvocation>) -> Connection {
+pub async fn connection(cli: Option<&CliInvocation>, connection_id: &str) -> Connection {
     let Some(cli) = cli else {
         return Connection::disconnected(
+            connection_id,
             Provider::Vercel,
             ConnectionStatus::MissingCli,
             "Vercel CLI 50.29 or newer was not found.",
@@ -161,13 +169,14 @@ pub async fn connection(cli: Option<&CliInvocation>) -> Connection {
     let version = cli.version().await;
     match current_user(cli).await {
         Ok(user) => Connection {
+            connection_id: connection_id.into(),
             provider: Provider::Vercel,
             status: ConnectionStatus::Connected,
             account: Some(user.username),
             message: None,
             cli_version: version,
         },
-        Err(error) => failed_discovery(error, version).connection,
+        Err(error) => failed_discovery(error, version, connection_id).connection,
     }
 }
 
@@ -222,7 +231,7 @@ async fn discover_projects(
     Ok((projects, cursor.is_some()))
 }
 
-fn project_target(context: ProjectContext) -> Target {
+fn project_target(context: ProjectContext, connection_id: &str) -> Target {
     let description = Some(match context.project.framework.as_deref() {
         Some(framework) => format!("{} · {framework}", context.scope_slug),
         None => context.scope_slug.clone(),
@@ -241,13 +250,14 @@ fn project_target(context: ProjectContext) -> Target {
     Target {
         id,
         provider: Provider::Vercel,
+        connection_id: connection_id.into(),
         name: context.project.name,
         description,
         metadata,
     }
 }
 
-fn failed_discovery(error: CliError, version: Option<String>) -> Discovery {
+fn failed_discovery(error: CliError, version: Option<String>, connection_id: &str) -> Discovery {
     let status = match error {
         CliError::SignedOut => ConnectionStatus::SignedOut,
         CliError::Unavailable => ConnectionStatus::MissingCli,
@@ -255,6 +265,7 @@ fn failed_discovery(error: CliError, version: Option<String>) -> Discovery {
     };
     Discovery {
         connection: Connection {
+            connection_id: connection_id.into(),
             provider: Provider::Vercel,
             status,
             account: None,
@@ -271,12 +282,17 @@ pub async fn collect(
     cli: Option<&CliInvocation>,
     targets: &[Target],
     history_hours: u32,
+    connection_id: &str,
 ) -> (Vec<Activity>, Vec<Issue>) {
+    if targets.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
     let Some(cli) = cli else {
         return (
             Vec::new(),
             vec![Issue {
                 provider: Provider::Vercel,
+                connection_id: Some(connection_id.into()),
                 message:
                     "Vercel CLI was not found. Cached Vercel activity is shown when available."
                         .into(),
@@ -291,6 +307,7 @@ pub async fn collect(
                 Vec::new(),
                 vec![Issue {
                     provider: Provider::Vercel,
+                    connection_id: Some(connection_id.into()),
                     message: error.user_message("Vercel"),
                     target_id: None,
                 }],
@@ -307,6 +324,7 @@ pub async fn collect(
                 if truncated {
                     issues.push(Issue {
                         provider: Provider::Vercel,
+                        connection_id: Some(connection_id.into()),
                         message: format!(
                             "Vercel history for {} reached the {MAX_DEPLOYMENT_PAGES}-page safety limit. Recent results are partial.",
                             target.name
@@ -317,6 +335,7 @@ pub async fn collect(
             }
             Err(error) => issues.push(Issue {
                 provider: Provider::Vercel,
+                connection_id: Some(connection_id.into()),
                 message: error.user_message("Vercel"),
                 target_id: Some(target.id.clone()),
             }),
@@ -463,6 +482,7 @@ fn map_deployment(
     Ok(Activity {
         id: format!("vercel:{}", deployment.uid),
         provider: Provider::Vercel,
+        connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
         kind: deployment.target.unwrap_or_else(|| "preview".into()),
         title: deployment.name,
@@ -532,6 +552,13 @@ fn validate_vercel_id(value: &str) -> Result<(), ()> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn unused_provider_never_requires_authentication() {
+        let (activities, issues) = collect(None, &[], 24, "vercel:local").await;
+        assert!(activities.is_empty());
+        assert!(issues.is_empty());
+    }
+
     #[test]
     fn status_mapping_covers_known_vercel_states() {
         assert_eq!(vercel_status("QUEUED"), ActivityStatus::Queued);
@@ -587,6 +614,7 @@ mod tests {
         let target = Target {
             id: "personal:prj_123".into(),
             provider: Provider::Vercel,
+            connection_id: "vercel:local".into(),
             name: "rocket".into(),
             description: None,
             metadata: HashMap::from([("scopeSlug".into(), "demo-team".into())]),

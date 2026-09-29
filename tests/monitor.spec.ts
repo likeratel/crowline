@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?view=dashboard");
 });
 test("clearly labels preview and filters mine, all, service and search", async ({
   page,
@@ -53,14 +53,24 @@ test("browser preview cannot pretend a real login succeeded", async ({
     page.getByText("로그인은 데스크톱 앱에서 사용할 수 있습니다."),
   ).toBeVisible();
 });
-test("desktop and narrow dark layouts fit without horizontal scrolling", async ({
+test("black theme stays dark across OS preferences and fits narrow windows", async ({
   page,
 }) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+  await expect(page.locator("html")).toHaveCSS(
+    "background-color",
+    "rgb(13, 14, 16)",
+  );
   await page.screenshot({
-    path: "artifacts/crowline-light.png",
+    path: "artifacts/crowline-black.png",
     fullPage: true,
   });
   await page.emulateMedia({ colorScheme: "dark" });
+  await expect(page.locator("html")).toHaveCSS(
+    "background-color",
+    "rgb(13, 14, 16)",
+  );
   await page.setViewportSize({ width: 700, height: 800 });
   await expect(
     page.getByRole("heading", { name: "배포 현황", exact: true }),

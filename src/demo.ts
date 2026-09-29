@@ -1,10 +1,33 @@
-import type { Activity, Provider, Snapshot, Target } from "./domain";
+import type { Account, Activity, Provider, Snapshot, Target } from "./domain";
+
+export const DEMO_ACCOUNTS: Account[] = [
+  {
+    id: "github:local",
+    provider: "github",
+    label: "GitHub CLI",
+    mode: "local",
+  },
+  {
+    id: "vercel:local",
+    provider: "vercel",
+    label: "Vercel CLI",
+    mode: "local",
+  },
+  {
+    id: "aws:development",
+    provider: "aws",
+    label: "Development",
+    mode: "local",
+    profile: "development",
+  },
+];
 
 const ago = (minutes: number) =>
   new Date(Date.now() - minutes * 60_000).toISOString();
 export const DEMO_TARGETS: Target[] = [
   {
     id: "github:orbit/web",
+    connectionId: "github:local",
     provider: "github",
     name: "orbit/web",
     description: "웹 애플리케이션",
@@ -12,6 +35,7 @@ export const DEMO_TARGETS: Target[] = [
   },
   {
     id: "vercel:orbit-web",
+    connectionId: "vercel:local",
     provider: "vercel",
     name: "orbit-web",
     description: "Orbit 팀",
@@ -19,6 +43,7 @@ export const DEMO_TARGETS: Target[] = [
   },
   {
     id: "aws:api",
+    connectionId: "aws:development",
     provider: "aws",
     name: "orbit-api",
     description: "development · ap-northeast-2",
@@ -36,6 +61,7 @@ function activity(
   return {
     id,
     provider,
+    connectionId: provider === "aws" ? "aws:development" : `${provider}:local`,
     title,
     status,
     ownership,
@@ -64,11 +90,31 @@ function activity(
 }
 export function demoSnapshot(): Snapshot {
   return {
-    settings: { scope: "mine", historyHours: 24, targets: DEMO_TARGETS },
+    settings: {
+      scope: "mine",
+      historyHours: 24,
+      targets: DEMO_TARGETS,
+      accounts: DEMO_ACCOUNTS,
+    },
     connections: [
-      { provider: "github", status: "connected", account: "alex" },
-      { provider: "vercel", status: "connected", account: "alex / Orbit" },
-      { provider: "aws", status: "connected", account: "development" },
+      {
+        connectionId: "github:local",
+        provider: "github",
+        status: "connected",
+        account: "alex",
+      },
+      {
+        connectionId: "vercel:local",
+        provider: "vercel",
+        status: "connected",
+        account: "alex / Orbit",
+      },
+      {
+        connectionId: "aws:development",
+        provider: "aws",
+        status: "connected",
+        account: "development",
+      },
     ],
     activities: [
       activity("g1", "github", "Deploy production", "running", 4),

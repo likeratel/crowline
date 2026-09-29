@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { z } from "zod";
 import {
+  accountSchema,
   connectionSchema,
   discoverySchema,
   loginSchema,
@@ -33,36 +34,114 @@ export const bridge = {
   },
   discover: async (
     provider: Provider,
+    connectionId: string | null,
     profile: string | null = null,
     region: string | null = null,
   ) => {
     if (!isPreview)
-      return call("discover", discoverySchema, { provider, profile, region });
+      return call("discover", discoverySchema, {
+        provider,
+        connectionId,
+        profile,
+        region,
+      });
     return discoverySchema.parse({
       connection: connectionSchema.parse({
+        connectionId: connectionId ?? "aws:local",
         provider,
         status: "connected",
         account: "alex (미리보기)",
       }),
-      targets: DEMO_TARGETS.filter((target) => target.provider === provider),
+      targets: connectionId
+        ? DEMO_TARGETS.filter((target) => target.provider === provider).map(
+            (target) => ({ ...target, connectionId }),
+          )
+        : [],
       awsProfiles: ["development"],
       issues: [],
     });
   },
-  login: async (provider: Provider, profile: string | null) => {
+  login: async (
+    provider: Provider,
+    connectionId: string,
+    profile: string | null,
+  ) => {
     if (isPreview)
       return loginSchema.parse({
+        connectionId,
         provider,
         state: "error",
         message: "로그인은 데스크톱 앱에서 사용할 수 있습니다.",
       });
-    return call("begin_login", loginSchema, { provider, profile });
+    return call("begin_login", loginSchema, {
+      provider,
+      connectionId,
+      profile,
+    });
   },
-  loginStatus: (provider: Provider) =>
-    call("get_login_status", loginSchema, { provider }),
+  loginStatus: (provider: Provider, connectionId: string) =>
+    call("get_login_status", loginSchema, { provider, connectionId }),
+  createConnection: async (
+    provider: Provider,
+    label: string,
+    profile: string | null,
+  ) => {
+    if (!isPreview)
+      return call("create_connection", accountSchema, {
+        provider,
+        label,
+        profile,
+      });
+    const account = accountSchema.parse({
+      id: `${provider}:demo-${Date.now()}`,
+      provider,
+      label,
+      profile,
+      mode: provider === "aws" ? "local" : "isolated",
+    });
+    preview = {
+      ...preview,
+      settings: {
+        ...preview.settings,
+        accounts: [...preview.settings.accounts, account],
+      },
+    };
+    return account;
+  },
+  removeConnection: async (connectionId: string) => {
+    if (!isPreview)
+      return call("remove_connection", settingsSchema, { connectionId });
+    const settings = {
+      ...preview.settings,
+      accounts: preview.settings.accounts.filter(
+        (item) => item.id !== connectionId,
+      ),
+      targets: preview.settings.targets.filter(
+        (item) => item.connectionId !== connectionId,
+      ),
+    };
+    preview = {
+      ...preview,
+      settings,
+      activities: preview.activities.filter(
+        (item) => item.connectionId !== connectionId,
+      ),
+    };
+    return settings;
+  },
   open: async (url: string) => {
     if (isPreview) return;
     await invoke("open_external", { url });
+  },
+  dashboard: async () => {
+    if (isPreview) {
+      window.location.search = "?view=dashboard";
+      return;
+    }
+    await invoke("open_dashboard");
+  },
+  hide: async () => {
+    if (!isPreview) await invoke("hide_panel");
   },
   subscribe: async (
     handler: (snapshot: Snapshot) => void,

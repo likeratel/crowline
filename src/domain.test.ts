@@ -10,6 +10,77 @@ import {
 } from "./domain";
 
 describe("activity filtering", () => {
+  it("uses the latest cross-account state while preserving verified Mine attribution", () => {
+    const base = demoSnapshot();
+    const cached = {
+      ...base.activities[0],
+      ownership: "mine" as const,
+      status: "running" as const,
+      updatedAt: "2026-09-29T00:00:00Z",
+    };
+    const fresh = {
+      ...cached,
+      connectionId: "github:work",
+      ownership: "other" as const,
+      status: "success" as const,
+      updatedAt: "2026-09-29T00:10:00Z",
+      finishedAt: "2026-09-29T00:10:00Z",
+    };
+    const now = Date.parse("2026-09-29T00:20:00Z");
+    for (const activities of [
+      [cached, fresh],
+      [fresh, cached],
+    ]) {
+      const snapshot = { ...base, activities };
+      expect(visibleActivities(snapshot, "all", "", now)).toEqual([
+        { ...fresh, ownership: "mine" },
+      ]);
+      expect(
+        visibleActivities(snapshot, "all", "", now, cached.connectionId),
+      ).toEqual([cached]);
+      expect(
+        visibleActivities(snapshot, "all", "", now, fresh.connectionId),
+      ).toEqual([]);
+    }
+    const tied = { ...cached, updatedAt: fresh.updatedAt };
+    expect(
+      visibleActivities(
+        { ...base, activities: [fresh, tied] },
+        "all",
+        "",
+        now,
+      )[0].status,
+    ).toBe("success");
+  });
+  it("combines accounts without double-counting the same execution and prefers verified mine", () => {
+    const base = demoSnapshot();
+    const run = base.activities[0];
+    const other = {
+      ...run,
+      connectionId: "github:work",
+      ownership: "other" as const,
+    };
+    const snapshot = {
+      ...base,
+      settings: { ...base.settings, scope: "all" as const },
+      activities: [other, run],
+    };
+    const combined = visibleActivities(snapshot, "all", "");
+    expect(combined).toHaveLength(1);
+    expect(combined[0].connectionId).toBe("github:local");
+    expect(
+      visibleActivities(snapshot, "all", "", undefined, "github:work"),
+    ).toEqual([other]);
+    expect(
+      visibleActivities(
+        { ...snapshot, settings: { ...snapshot.settings, scope: "mine" } },
+        "all",
+        "",
+        undefined,
+        "github:work",
+      ),
+    ).toEqual([]);
+  });
   it("mine excludes other users and unknown ownership", () => {
     expect(
       visibleActivities(demoSnapshot(), "all", "").every(
