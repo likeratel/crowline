@@ -89,6 +89,20 @@ describe("activity filtering", () => {
     expect(duration(item)).toBe("—");
     expect(isActive(item)).toBe(false);
   });
+  it("keeps unknown status visible without claiming it is running", () => {
+    const snapshot = demoSnapshot();
+    const item: Activity = {
+      ...snapshot.activities[0],
+      status: "unknown",
+      updatedAt: "2020-01-01T00:00:00Z",
+      finishedAt: null,
+    };
+    expect(isActive(item)).toBe(false);
+    expect(duration(item)).toBe("—");
+    expect(
+      visibleActivities({ ...snapshot, activities: [item] }, "all", ""),
+    ).toEqual([item]);
+  });
 });
 describe("IPC validation", () => {
   it("accepts a valid snapshot and rejects unknown source states", () => {

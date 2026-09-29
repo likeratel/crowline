@@ -108,7 +108,7 @@ export const STATUS_LABELS: Record<Activity["status"], string> = {
   unknown: "상태 미확인",
 };
 export const isActive = (activity: Activity) =>
-  ["queued", "running", "waiting", "unknown"].includes(activity.status);
+  ["queued", "running", "waiting"].includes(activity.status);
 
 export function visibleActivities(
   snapshot: Snapshot,
@@ -124,6 +124,7 @@ export function visibleActivities(
         (snapshot.settings.scope === "all" || activity.ownership === "mine") &&
         (provider === "all" || activity.provider === provider) &&
         (isActive(activity) ||
+          activity.status === "unknown" ||
           Date.parse(activity.finishedAt ?? activity.updatedAt) >= cutoff) &&
         (!query ||
           [

@@ -58,7 +58,12 @@ export default function App() {
     );
   const activities = visibleActivities(snapshot, provider, search);
   const active = activities.filter(isActive);
-  const completed = activities.filter((activity) => !isActive(activity));
+  const completed = activities.filter(
+    (activity) => !isActive(activity) && activity.status !== "unknown",
+  );
+  const unresolved = activities.filter(
+    (activity) => activity.status === "unknown",
+  );
   const unknown = snapshot.activities.filter(
     (activity) =>
       activity.ownership === "unknown" &&
@@ -347,6 +352,14 @@ export default function App() {
               empty="현재 조건에 해당하는 최근 실행이 없습니다."
               onError={setError}
             />
+            {unresolved.length > 0 && (
+              <ActivityList
+                title="상태 확인 필요"
+                activities={unresolved}
+                empty=""
+                onError={setError}
+              />
+            )}
           </>
         )}
         <footer className="main-footer">
