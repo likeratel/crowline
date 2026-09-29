@@ -7,20 +7,35 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "tools:prepare": "node scripts/prepare-tools.mjs",
+    "desktop:build": "pnpm tools:prepare && pnpm tauri build",
+    "test:tools": "node --test scripts/prepare-tools.test.mjs",
+    "prepare-tools": "node scripts/prepare-tools.mjs",
+    "format:check": "prettier --check src tests *.ts *.json index.html"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "lucide-react": "^1.48.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^26.6.3",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^6.0.2",
+    "prettier": "^3.9.9",
     "typescript": "~6.0.3",
     "vite": "^8.0.16",
-    "@tauri-apps/cli": "^2"
-  }
+    "vitest": "^5.0.2"
+  },
+  "description": "A personal deployment monitor for your menu bar and system tray"
 }

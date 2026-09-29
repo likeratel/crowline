@@ -1,0 +1,100 @@
+import type { Activity, Provider, Snapshot, Target } from "./domain";
+
+const ago = (minutes: number) =>
+  new Date(Date.now() - minutes * 60_000).toISOString();
+export const DEMO_TARGETS: Target[] = [
+  {
+    id: "github:orbit/web",
+    provider: "github",
+    name: "orbit/web",
+    description: "웹 애플리케이션",
+    metadata: { repo: "orbit/web" },
+  },
+  {
+    id: "vercel:orbit-web",
+    provider: "vercel",
+    name: "orbit-web",
+    description: "Orbit 팀",
+    metadata: { projectId: "prj_demo", teamId: "team_demo" },
+  },
+  {
+    id: "aws:api",
+    provider: "aws",
+    name: "orbit-api",
+    description: "development · ap-northeast-2",
+    metadata: { profile: "development", region: "ap-northeast-2" },
+  },
+];
+function activity(
+  id: string,
+  provider: Provider,
+  title: string,
+  status: Activity["status"],
+  minutes: number,
+  ownership: Activity["ownership"] = "mine",
+): Activity {
+  return {
+    id,
+    provider,
+    title,
+    status,
+    ownership,
+    kind: provider === "github" ? "workflow" : "deployment",
+    project:
+      provider === "github"
+        ? "orbit/web"
+        : provider === "vercel"
+          ? "orbit-web"
+          : "orbit-api",
+    branch: "main",
+    actor: ownership === "mine" ? "alex" : ownership === "other" ? "sam" : null,
+    rawStatus: status.toUpperCase(),
+    url:
+      provider === "github"
+        ? "https://github.com"
+        : provider === "vercel"
+          ? "https://vercel.com"
+          : "https://console.aws.amazon.com",
+    startedAt: ago(minutes),
+    updatedAt: ago(Math.max(minutes - 2, 0)),
+    finishedAt: ["success", "failed", "canceled"].includes(status)
+      ? ago(Math.max(minutes - 2, 0))
+      : null,
+  };
+}
+export function demoSnapshot(): Snapshot {
+  return {
+    settings: { scope: "mine", historyHours: 24, targets: DEMO_TARGETS },
+    connections: [
+      { provider: "github", status: "connected", account: "alex" },
+      { provider: "vercel", status: "connected", account: "alex / Orbit" },
+      { provider: "aws", status: "connected", account: "development" },
+    ],
+    activities: [
+      activity("g1", "github", "Deploy production", "running", 4),
+      activity("v1", "vercel", "Improve workspace navigation", "running", 2),
+      activity(
+        "a1",
+        "aws",
+        "orbit-api · 스택 업데이트",
+        "running",
+        7,
+        "unknown",
+      ),
+      activity("g2", "github", "Test & typecheck", "success", 16),
+      activity(
+        "v2",
+        "vercel",
+        "Fix notification preferences",
+        "success",
+        32,
+        "other",
+      ),
+      activity("g3", "github", "Preview deployment", "failed", 68),
+      activity("v3", "vercel", "Update account settings", "success", 110),
+    ],
+    issues: [],
+    refreshing: false,
+    lastUpdatedAt: ago(0),
+  };
+}
