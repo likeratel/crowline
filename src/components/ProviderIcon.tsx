@@ -13,6 +13,7 @@ const LOGOS: Record<Provider, string> = {
   heroku: "heroku",
   fly: "flydotio",
   gitlab: "gitlab",
+  bitbucket: "bitbucket",
   digitalocean: "digitalocean",
   gcloud: "googlecloud",
   azure: "azure",

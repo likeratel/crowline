@@ -1,6 +1,20 @@
 import type { TranslationKey } from "./ko";
 
 export const ja = {
+  "bitbucket.reloadFailed":
+    "アカウントは接続済みですが、画面を更新できませんでした。再読み込みしてください。",
+  "platform.bitbucket": "AtlassianのメールアドレスとAPIトークンで接続します。",
+  "bitbucket.email": "Atlassianのメールアドレス",
+  "bitbucket.token": "APIトークン",
+  "bitbucket.connect": "アカウントを接続",
+  "bitbucket.renew": "トークンを変更",
+  "bitbucket.createToken": "APIトークンを作成",
+  "bitbucket.help":
+    "Bitbucket用のAPIトークンを作成し、以下の読み取り権限を選択してください。",
+  "bitbucket.connecting": "接続中…",
+  "bitbucket.newAccount": "Bitbucketアカウントを接続",
+  "bitbucket.invalid": "メールアドレスとAPIトークンを確認してください。",
+
   "common.retry": "再試行",
   "common.refresh": "更新",
   "common.cancel": "キャンセル",

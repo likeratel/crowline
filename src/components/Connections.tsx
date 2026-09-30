@@ -74,6 +74,9 @@ export function Connections({
     onBusyChange?.(busy);
   }, [busy, onBusyChange]);
   const [error, setError] = useState<string | null>(null);
+  const [pendingBitbucket, setPendingBitbucket] = useState<Account | null>(
+    null,
+  );
   const [logins, setLogins] = useState<Partial<Record<string, LoginStatus>>>(
     {},
   );
@@ -126,7 +129,7 @@ export function Connections({
     const found = await bridge.discover(
       nextProvider,
       nextConnectionId,
-      profile,
+      nextProvider === "aws" ? profile : null,
       nextProvider === "aws" ? region || null : null,
     );
     setResults((previous) => ({ ...previous, [nextConnectionId]: found }));
@@ -154,6 +157,58 @@ export function Connections({
     } catch (cause) {
       setError(errorMessage(cause));
       return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const connectBitbucket = async (
+    email: string,
+    token: string,
+    id: string | null,
+  ) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const connected = await bridge.connectBitbucket(email, token, id);
+      try {
+        await reload();
+      } catch {
+        setPendingBitbucket(connected);
+        return true;
+      }
+      selectAccount(connected);
+      try {
+        await discoverConnection("bitbucket", connected.id, null);
+      } catch (cause) {
+        setError(
+          t("connections.addedDiscoveryFailed", { error: errorMessage(cause) }),
+        );
+      }
+      return true;
+    } catch (cause) {
+      setError(errorMessage(cause));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const retryBitbucketReload = async () => {
+    if (!pendingBitbucket || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await reload();
+      selectAccount(pendingBitbucket);
+      setPendingBitbucket(null);
+      try {
+        await discoverConnection("bitbucket", pendingBitbucket.id, null);
+      } catch (cause) {
+        setError(
+          t("connections.addedDiscoveryFailed", { error: errorMessage(cause) }),
+        );
+      }
+    } catch {
+      setError(t("bitbucket.reloadFailed"));
     } finally {
       setBusy(false);
     }
@@ -366,220 +421,238 @@ export function Connections({
             provider: PROVIDER_NAMES[provider],
           })}
         >
-          <AccountPicker
-            key={provider}
-            provider={provider}
-            accounts={accounts}
-            settings={snapshot.settings}
-            connections={snapshot.connections.map((item) =>
-              item.connectionId === connectionId && result?.connection
-                ? result.connection
-                : item,
-            )}
-            discoveredConnection={result?.connection}
-            selectedId={connectionId}
-            busy={working}
-            profiles={awsProfiles}
-            onSelect={selectAccount}
-            onCreate={createAccount}
-            onRemove={removeAccount}
-            onLoadProfiles={loadProfiles}
-            savedTargetCount={
-              snapshot.settings.targets.filter(
-                (target) => target.connectionId === connectionId,
-              ).length
-            }
-          />
-          {!details.unsupportedMessage && (
-            <>
-              <div className="connection-state" role="status">
-                <span
-                  aria-hidden="true"
-                  className={`connection-dot ${connection?.status === "connected" ? "connected" : ""}`}
-                />
-                <div>
-                  <strong>
-                    {account
-                      ? accountDisplayName(
-                          account,
-                          snapshot.settings,
-                          connection ? [connection] : [],
-                        )
-                      : t("connections.checkConnection")}
-                  </strong>
-                  {connection?.status !== "connected" &&
-                    connection?.message && <p>{connection.message}</p>}
-                </div>
-              </div>
-              <details className="connection-help">
-                <summary>{settingsCopy(locale, "connectionHelp")}</summary>
-                <p>
-                  {provider === "aws"
-                    ? account
-                      ? t("connections.awsSelected", {
-                          profile: account.profile ?? account.label,
-                          command: "aws sso login --profile <profile>",
-                        })
-                      : t("connections.awsAdd")
-                    : account?.mode === "isolated"
-                      ? t("connections.appLogin", {
-                          provider: PROVIDER_NAMES[provider],
-                        })
-                      : details.cliCommand
-                        ? t("connections.completeCli", {
-                            command: details.cliCommand,
-                          })
-                        : details.connectionSummary}
-                </p>
-              </details>
-              {provider === "aws" && account && (
-                <div className="aws-fields">
-                  <label>
-                    {t("connections.profile")}
-                    <input value={account.profile ?? ""} readOnly />
-                  </label>
-                  <label>
-                    {t("connections.region")}
-                    <input
-                      value={region}
-                      onChange={(event) => setRegion(event.target.value)}
-                      placeholder="ap-northeast-2"
-                    />
-                  </label>
-                </div>
+          {provider === "bitbucket" && pendingBitbucket ? (
+            <div className="notice warning" role="status">
+              <span>{t("bitbucket.reloadFailed")}</span>
+              <button
+                className="button"
+                disabled={working}
+                onClick={() => void retryBitbucketReload()}
+              >
+                {t("common.retry")}
+              </button>
+            </div>
+          ) : (
+            <AccountPicker
+              key={provider}
+              provider={provider}
+              accounts={accounts}
+              settings={snapshot.settings}
+              connections={snapshot.connections.map((item) =>
+                item.connectionId === connectionId && result?.connection
+                  ? result.connection
+                  : item,
               )}
-              <div className="connection-actions">
-                <button
-                  className="button primary"
-                  onClick={() => void discover()}
-                  disabled={busy || !canConnect}
-                >
-                  {busy ? (
-                    <LoaderCircle size={15} className="spin" />
-                  ) : (
-                    <Search size={15} />
-                  )}
-                  {t("connections.verifyTargets")}
-                </button>
-                {details.canStartAppLogin && (
-                  <button
-                    className="button"
-                    onClick={() => void beginLogin()}
-                    disabled={
-                      busy ||
-                      !canConnect ||
-                      (login?.connectionId === connectionId &&
-                        login.state === "waiting")
-                    }
-                  >
-                    {provider === "aws"
-                      ? t("connections.ssoLogin")
-                      : t("connections.browserLogin")}
-                    <ArrowUpRight size={14} />
-                  </button>
-                )}
-              </div>
-              {login?.connectionId === connectionId && (
-                <div
-                  className={`notice ${login.state === "error" ? "warning" : ""}`}
-                  role="status"
-                >
-                  <span>{login.message}</span>
-                  {login.code && (
-                    <code className="device-code">{login.code}</code>
-                  )}
-                  {login.url && (
-                    <button
-                      className="text-button"
-                      onClick={() =>
-                        void bridge
-                          .open(login.url!)
-                          .catch((cause: unknown) =>
-                            setError(errorMessage(cause)),
+              discoveredConnection={result?.connection}
+              selectedId={connectionId}
+              busy={working}
+              profiles={awsProfiles}
+              onSelect={selectAccount}
+              onCreate={createAccount}
+              onRemove={removeAccount}
+              onConnectBitbucket={connectBitbucket}
+              onLoadProfiles={loadProfiles}
+              savedTargetCount={
+                snapshot.settings.targets.filter(
+                  (target) => target.connectionId === connectionId,
+                ).length
+              }
+            />
+          )}
+          {!details.unsupportedMessage &&
+            (provider !== "bitbucket" || account) && (
+              <>
+                <div className="connection-state" role="status">
+                  <span
+                    aria-hidden="true"
+                    className={`connection-dot ${connection?.status === "connected" ? "connected" : ""}`}
+                  />
+                  <div>
+                    <strong>
+                      {account
+                        ? accountDisplayName(
+                            account,
+                            snapshot.settings,
+                            connection ? [connection] : [],
                           )
+                        : t("connections.checkConnection")}
+                    </strong>
+                    {connection?.status !== "connected" &&
+                      connection?.message && <p>{connection.message}</p>}
+                  </div>
+                </div>
+                {provider !== "bitbucket" && (
+                  <details className="connection-help">
+                    <summary>{settingsCopy(locale, "connectionHelp")}</summary>
+                    <p>
+                      {provider === "aws"
+                        ? account
+                          ? t("connections.awsSelected", {
+                              profile: account.profile ?? account.label,
+                              command: "aws sso login --profile <profile>",
+                            })
+                          : t("connections.awsAdd")
+                        : account?.mode === "isolated"
+                          ? t("connections.appLogin", {
+                              provider: PROVIDER_NAMES[provider],
+                            })
+                          : details.cliCommand
+                            ? t("connections.completeCli", {
+                                command: details.cliCommand,
+                              })
+                            : details.connectionSummary}
+                    </p>
+                  </details>
+                )}
+                {provider === "aws" && account && (
+                  <div className="aws-fields">
+                    <label>
+                      {t("connections.profile")}
+                      <input value={account.profile ?? ""} readOnly />
+                    </label>
+                    <label>
+                      {t("connections.region")}
+                      <input
+                        value={region}
+                        onChange={(event) => setRegion(event.target.value)}
+                        placeholder="ap-northeast-2"
+                      />
+                    </label>
+                  </div>
+                )}
+                <div className="connection-actions">
+                  <button
+                    className="button primary"
+                    onClick={() => void discover()}
+                    disabled={busy || !canConnect}
+                  >
+                    {busy ? (
+                      <LoaderCircle size={15} className="spin" />
+                    ) : (
+                      <Search size={15} />
+                    )}
+                    {t("connections.verifyTargets")}
+                  </button>
+                  {details.canStartAppLogin && (
+                    <button
+                      className="button"
+                      onClick={() => void beginLogin()}
+                      disabled={
+                        busy ||
+                        !canConnect ||
+                        (login?.connectionId === connectionId &&
+                          login.state === "waiting")
                       }
                     >
-                      {t("connections.openAuth")} <ArrowUpRight size={13} />
-                    </button>
-                  )}
-                  {login.state === "complete" && (
-                    <button
-                      className="text-button"
-                      onClick={() => void discover()}
-                    >
-                      {t("connections.loadTargets")}
+                      {provider === "aws"
+                        ? t("connections.ssoLogin")
+                        : t("connections.browserLogin")}
+                      <ArrowUpRight size={14} />
                     </button>
                   )}
                 </div>
-              )}
-              {result?.issues.map((issue, index) => (
-                <div
-                  className="notice warning"
-                  key={`${issue.provider}-${index}`}
-                  role="status"
-                >
-                  {issue.message}
-                </div>
-              ))}
-              <div className="target-heading">
-                <h3>
-                  {t("connections.targets")} <span>{uniqueTargets.length}</span>
-                </h3>
-                <span>
-                  {t("common.selectedCount", {
-                    count: selected.filter(
-                      (target) => target.connectionId === connectionId,
-                    ).length,
-                  })}
-                </span>
-              </div>
-              {mergedTargets.length > 0 && (
-                <label className="search-box target-search">
-                  <Search size={15} />
-                  <input
-                    aria-label={t("connections.searchTargets")}
-                    value={search}
-                    placeholder={t("connections.searchByName")}
-                    onChange={(event) => setSearch(event.target.value)}
-                  />
-                </label>
-              )}
-              <div className="target-list">
-                {targets.length ? (
-                  targets.map((target) => (
-                    <label key={targetKey(target)} className="target-option">
-                      <input
-                        type="checkbox"
-                        disabled={working}
-                        checked={selected.some(
-                          (item) => targetKey(item) === targetKey(target),
-                        )}
-                        onChange={() => toggle(target)}
-                      />
-                      <div>
-                        <strong>{target.name}</strong>
-                        {target.description && (
-                          <span>{target.description}</span>
-                        )}
-                        <SettingFeedback
-                          changeKey={`target:${targetKey(target)}`}
-                        />
-                      </div>
-                    </label>
-                  ))
-                ) : (
-                  <p className="targets-empty">
-                    {result
-                      ? t("connections.noTargets")
-                      : t("connections.verifyFirst")}
-                  </p>
+                {login?.connectionId === connectionId && (
+                  <div
+                    className={`notice ${login.state === "error" ? "warning" : ""}`}
+                    role="status"
+                  >
+                    <span>{login.message}</span>
+                    {login.code && (
+                      <code className="device-code">{login.code}</code>
+                    )}
+                    {login.url && (
+                      <button
+                        className="text-button"
+                        onClick={() =>
+                          void bridge
+                            .open(login.url!)
+                            .catch((cause: unknown) =>
+                              setError(errorMessage(cause)),
+                            )
+                        }
+                      >
+                        {t("connections.openAuth")} <ArrowUpRight size={13} />
+                      </button>
+                    )}
+                    {login.state === "complete" && (
+                      <button
+                        className="text-button"
+                        onClick={() => void discover()}
+                      >
+                        {t("connections.loadTargets")}
+                      </button>
+                    )}
+                  </div>
                 )}
-              </div>
-              {!details.supportsActorAttribution && (
-                <p className="field-help">{t("connections.actorHelp")}</p>
-              )}
-            </>
-          )}
+                {result?.issues.map((issue, index) => (
+                  <div
+                    className="notice warning"
+                    key={`${issue.provider}-${index}`}
+                    role="status"
+                  >
+                    {issue.message}
+                  </div>
+                ))}
+                <div className="target-heading">
+                  <h3>
+                    {t("connections.targets")}{" "}
+                    <span>{uniqueTargets.length}</span>
+                  </h3>
+                  <span>
+                    {t("common.selectedCount", {
+                      count: selected.filter(
+                        (target) => target.connectionId === connectionId,
+                      ).length,
+                    })}
+                  </span>
+                </div>
+                {mergedTargets.length > 0 && (
+                  <label className="search-box target-search">
+                    <Search size={15} />
+                    <input
+                      aria-label={t("connections.searchTargets")}
+                      value={search}
+                      placeholder={t("connections.searchByName")}
+                      onChange={(event) => setSearch(event.target.value)}
+                    />
+                  </label>
+                )}
+                <div className="target-list">
+                  {targets.length ? (
+                    targets.map((target) => (
+                      <label key={targetKey(target)} className="target-option">
+                        <input
+                          type="checkbox"
+                          disabled={working}
+                          checked={selected.some(
+                            (item) => targetKey(item) === targetKey(target),
+                          )}
+                          onChange={() => toggle(target)}
+                        />
+                        <div>
+                          <strong>{target.name}</strong>
+                          {target.description && (
+                            <span>{target.description}</span>
+                          )}
+                          <SettingFeedback
+                            changeKey={`target:${targetKey(target)}`}
+                          />
+                        </div>
+                      </label>
+                    ))
+                  ) : (
+                    <p className="targets-empty">
+                      {result
+                        ? t("connections.noTargets")
+                        : t("connections.verifyFirst")}
+                    </p>
+                  )}
+                </div>
+                {!details.supportsActorAttribution && (
+                  <p className="field-help">{t("connections.actorHelp")}</p>
+                )}
+              </>
+            )}
           {error && (
             <div className="notice warning" role="alert">
               <AlertCircle size={16} />

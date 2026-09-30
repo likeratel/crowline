@@ -10,6 +10,7 @@ import {
 import { getPlatformDetails } from "../platformDetails";
 import { useI18n } from "../i18n";
 import { accountDisplayName } from "../accountNames";
+import { BitbucketConnect } from "./BitbucketConnect";
 import { AccountAliasEditor } from "./AccountAliasEditor";
 import { SettingFeedback } from "./SettingFeedback";
 import { settingsCopy } from "../settingsCopy";
@@ -26,6 +27,11 @@ interface Props {
   onSelect: (account: Account) => void;
   onCreate: (label: string, profile: string | null) => Promise<boolean>;
   onRemove: () => Promise<boolean>;
+  onConnectBitbucket: (
+    email: string,
+    token: string,
+    connectionId: string | null,
+  ) => Promise<boolean>;
   onLoadProfiles: () => Promise<void>;
   savedTargetCount: number;
 }
@@ -41,6 +47,7 @@ export function AccountPicker({
   onSelect,
   onCreate,
   onRemove,
+  onConnectBitbucket,
   onLoadProfiles,
   savedTargetCount,
 }: Props) {
@@ -48,6 +55,7 @@ export function AccountPicker({
   const details = getPlatformDetails(provider, locale);
   const supportsMultipleAccounts = details.supportsMultipleAccounts;
   const [adding, setAdding] = useState(false);
+  const [renewing, setRenewing] = useState(false);
   const [editingAlias, setEditingAlias] = useState(false);
   const identities = discoveredConnection
     ? [
@@ -65,6 +73,7 @@ export function AccountPicker({
   useEffect(() => {
     setPendingRemovalId(null);
     setEditingAlias(false);
+    setRenewing(false);
   }, [selectedId]);
   const add = async () => {
     if (
@@ -147,7 +156,10 @@ export function AccountPicker({
               className="icon-button"
               aria-label={t("accountPicker.add")}
               disabled={busy}
-              onClick={() => setAdding(!adding)}
+              onClick={() => {
+                setAdding(!adding);
+                setRenewing(false);
+              }}
             >
               <Plus size={16} />
             </button>
@@ -217,59 +229,90 @@ export function AccountPicker({
           </button>
         </div>
       )}
-      {supportsMultipleAccounts && (adding || accounts.length === 0) && (
-        <div className="account-create">
-          <strong>
-            {provider === "aws"
-              ? t("accountPicker.awsProfile")
-              : t("accountPicker.separateAccount")}
-          </strong>
-          <label>
-            {t("accountPicker.name")}
-            <input
-              value={label}
-              onChange={(event) => setLabel(event.target.value)}
-              placeholder={t("accountPicker.namePlaceholder")}
-              maxLength={80}
-            />
-          </label>
-          {provider === "aws" && (
-            <>
-              <label>
-                {t("accountPicker.profile")}
-                <input
-                  list="new-aws-profiles"
-                  value={profile}
-                  onChange={(event) => setProfile(event.target.value)}
-                  placeholder="development"
-                  maxLength={128}
-                />
-              </label>
-              <datalist id="new-aws-profiles">
-                {profiles.map((name) => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
-              <button
-                className="text-button"
-                disabled={busy}
-                onClick={() => void onLoadProfiles()}
-              >
-                {t("accountPicker.loadProfiles")}
-              </button>
-            </>
-          )}
-          <button
-            className="button"
-            disabled={busy || (provider === "aws" && !profile.trim())}
-            onClick={() => void add()}
-          >
-            {provider === "aws"
-              ? t("accountPicker.addProfile")
-              : t("accountPicker.addAccount")}
-          </button>
-        </div>
+      {provider === "bitbucket" && selectedAccount && !adding && (
+        <button
+          className="text-button"
+          disabled={busy}
+          onClick={() => setRenewing(!renewing)}
+        >
+          {t("bitbucket.renew")}
+        </button>
       )}
+      {provider === "bitbucket" &&
+        (adding || renewing || accounts.length === 0) && (
+          <BitbucketConnect
+            key={renewing ? selectedId : "new"}
+            busy={busy}
+            renewing={renewing}
+            onConnect={async (email, token) => {
+              const connected = await onConnectBitbucket(
+                email,
+                token,
+                renewing ? selectedId : null,
+              );
+              if (connected) {
+                setAdding(false);
+                setRenewing(false);
+              }
+              return connected;
+            }}
+          />
+        )}
+      {provider !== "bitbucket" &&
+        supportsMultipleAccounts &&
+        (adding || accounts.length === 0) && (
+          <div className="account-create">
+            <strong>
+              {provider === "aws"
+                ? t("accountPicker.awsProfile")
+                : t("accountPicker.separateAccount")}
+            </strong>
+            <label>
+              {t("accountPicker.name")}
+              <input
+                value={label}
+                onChange={(event) => setLabel(event.target.value)}
+                placeholder={t("accountPicker.namePlaceholder")}
+                maxLength={80}
+              />
+            </label>
+            {provider === "aws" && (
+              <>
+                <label>
+                  {t("accountPicker.profile")}
+                  <input
+                    list="new-aws-profiles"
+                    value={profile}
+                    onChange={(event) => setProfile(event.target.value)}
+                    placeholder="development"
+                    maxLength={128}
+                  />
+                </label>
+                <datalist id="new-aws-profiles">
+                  {profiles.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+                <button
+                  className="text-button"
+                  disabled={busy}
+                  onClick={() => void onLoadProfiles()}
+                >
+                  {t("accountPicker.loadProfiles")}
+                </button>
+              </>
+            )}
+            <button
+              className="button"
+              disabled={busy || (provider === "aws" && !profile.trim())}
+              onClick={() => void add()}
+            >
+              {provider === "aws"
+                ? t("accountPicker.addProfile")
+                : t("accountPicker.addAccount")}
+            </button>
+          </div>
+        )}
     </div>
   );
 }

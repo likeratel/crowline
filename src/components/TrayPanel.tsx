@@ -38,6 +38,8 @@ function RunRow({
   onError: (message: string) => void;
 }) {
   const { locale, t } = useI18n();
+  const actor = item.actor?.trim() || t("common.unknownActor");
+  const context = [item.project, item.branch].filter(Boolean).join(" · ");
   const Icon =
     item.status === "running"
       ? LoaderCircle
@@ -77,8 +79,13 @@ function RunRow({
       <span className="panel-run-copy">
         <span className="panel-run-title">{item.title}</span>
         <span className="panel-run-meta">
-          {item.project}
-          {item.branch ? ` · ${item.branch}` : ""}
+          <span className="panel-run-context" title={context}>
+            {context}
+          </span>
+          <span className="panel-run-actor" title={actor}>
+            {" "}
+            · {actor}
+          </span>
         </span>
       </span>
       <span className="panel-run-time" title={item.rawStatus}>

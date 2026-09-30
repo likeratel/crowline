@@ -1,4 +1,4 @@
-use super::{aws, cloud, github, github_deployments, hosting, mobile, vercel};
+use super::{aws, bitbucket, cloud, github, github_deployments, hosting, mobile, vercel};
 use crate::{
     cli::CliInvocation,
     models::{Account, ActivityPage, Connection, Discovery, Provider, Target},
@@ -70,6 +70,7 @@ pub async fn connection(
             )
             .await
         }
+        Provider::Bitbucket => bitbucket::connection(account).await,
         Provider::Railway
         | Provider::Netlify
         | Provider::Render
@@ -108,6 +109,7 @@ pub async fn discover(cli: Option<&CliInvocation>, account: &Account) -> Discove
                 }],
             }),
         Provider::GithubDeployments => github_deployments::discover(cli, account).await,
+        Provider::Bitbucket => bitbucket::discover(account).await,
         Provider::Railway
         | Provider::Netlify
         | Provider::Render
@@ -124,14 +126,26 @@ pub async fn discover(cli: Option<&CliInvocation>, account: &Account) -> Discove
 }
 
 pub fn has_active_scan(provider: Provider) -> bool {
-    matches!(provider, Provider::Github | Provider::Vercel)
+    matches!(
+        provider,
+        Provider::Github | Provider::Vercel | Provider::Bitbucket
+    )
 }
 
 pub async fn active(
-    cli: &CliInvocation,
+    cli: Option<&CliInvocation>,
     target: &Target,
     identity: Option<&str>,
 ) -> Result<ActivityPage, String> {
+    if target.provider == Provider::Bitbucket {
+        return bitbucket::active(target).await;
+    }
+    let cli = cli.ok_or_else(|| {
+        format!(
+            "{} CLI is not installed. Connect its local CLI session first.",
+            target.provider.as_str()
+        )
+    })?;
     match target.provider {
         Provider::Github => github::active(cli, target, identity).await,
         Provider::Vercel => vercel::active(cli, target, identity).await,
@@ -155,6 +169,9 @@ pub async fn page(
     }
     if target.provider == Provider::Aws {
         return aws::page(target, cursor, hours).await;
+    }
+    if target.provider == Provider::Bitbucket {
+        return bitbucket::page(target, cursor).await;
     }
     let cli = cli.ok_or_else(|| {
         format!(

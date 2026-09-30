@@ -4,9 +4,38 @@
 
 <img src="public/crowline.png" alt="줄 위에서 바라보는 세 마리 까마귀" width="160" />
 
-crowline은 배포와 CI 결과를 확인하는 로컬 우선 데스크톱 모니터입니다. 메뉴바/시스템 트레이의 까마귀에서 요약 패널을 열고, 대시보드에서 계정 연결·감시 대상·검색·이력을 관리합니다. Tauri 2, React, TypeScript, Rust로 만들었으며 공용 계정이나 앱 서버는 없습니다. 이 컴퓨터에 이미 있는 자격 증명으로만 서비스를 조회합니다. UI 기본값은 시스템 언어이며 한국어, 영어, 일본어, 중국어 간체를 지원합니다. 시스템 언어를 인식하지 못하면 영어로 표시합니다.
+crowline은 배포와 CI 결과를 확인하는 로컬 우선 데스크톱 모니터입니다. 메뉴바/시스템 트레이의 까마귀에서 요약 패널을 열고, 대시보드에서 계정 연결·감시 대상·검색·이력을 관리합니다. Tauri 2, React, TypeScript, Rust로 만들었으며 공용 계정이나 앱 서버는 없습니다. 로컬 CLI 세션이나 직접 연결한 계정으로 서비스를 조회합니다. UI 기본값은 시스템 언어이며 한국어, 영어, 일본어, 중국어 간체를 지원합니다. 시스템 언어를 인식하지 못하면 영어로 표시합니다.
 
-## 클론에서 실행
+## 미리 보기
+
+배포 현황 → 서비스별 필터 → 계정 연결 → 프로젝트별 알림 설정 흐름을 확인해 보세요.
+
+![서비스별 실행 조회와 계정 연결, 내 실행 알림 설정 데모](docs/images/walkthrough.gif)
+
+가상 프로젝트와 계정으로 앱의 브라우저 미리보기를 촬영했습니다. 실제 배포나 알림 수신 장면은 아닙니다.
+
+<details>
+<summary>스크린샷 더 보기</summary>
+
+**메뉴 막대 패널** — 실행 상태와 브랜치, 실행자를 빠르게 확인합니다.
+
+<img src="docs/images/menu-bar.png" alt="플랫폼 아이콘과 실행자 이름이 표시된 메뉴 막대 요약 패널" width="420" />
+
+**대시보드** — 진행 중인 실행과 최근 결과를 모아서 봅니다.
+
+![GitHub Actions와 Vercel의 가상 배포 현황](docs/images/dashboard.png)
+
+**서비스 연결** — 계정을 연결하고 모니터링할 프로젝트를 선택합니다.
+
+![서비스 선택과 GitHub 계정 연결 화면](docs/images/connections.png)
+
+**알림** — 프로젝트마다 내 실행만 받을지, 어떤 결과를 받을지 정합니다.
+
+![프로젝트별 알림 대상과 결과 설정 화면](docs/images/notifications.png)
+
+</details>
+
+## 개발 환경에서 실행
 
 Node.js 22.23.3 이상, pnpm 10, Rust stable이 필요합니다. 격리 GitHub helper 빌드에는 Go 1.26.8도 필요합니다(패키지 앱 사용자는 불필요). macOS에는 Xcode Command Line Tools, Windows에는 Microsoft C++ Build Tools와 WebView2 등 [Tauri 필수 도구](https://v2.tauri.app/start/prerequisites/)를 준비합니다.
 
@@ -20,6 +49,8 @@ pnpm tauri dev
 
 `tools:prepare`는 고정된 GitHub CLI·Node.js·Vercel CLI를 내려받고 체크섬으로 검증한 원본에서 격리 helper를 빌드합니다. 인터넷과 수백 MB 공간이 필요하며 전역 설치는 하지 않습니다.
 
+## 빌드
+
 ```sh
 pnpm desktop:build
 ```
@@ -30,11 +61,11 @@ pnpm desktop:build
 
 대시보드 사이드바의 단일 **설정** 항목을 엽니다. 탭은 **서비스 연결**, **알림**, **메뉴 막대**, **일반**입니다. GitHub/Vercel은 기존 로컬 CLI 계정으로 시작합니다. 연결을 확인하고 감시할 대상을 고르면 바로 반영됩니다. 추가 GitHub/Vercel 계정은 이름을 붙인 슬롯을 만들고 브라우저에서 로그인합니다. 추가 GitHub 계정은 OS 자격 증명 저장소 이름을 계정별로 분리하는 동봉 `gh-isolated`만 쓰며, 패치되지 않은 시스템 CLI로 대체하지 않습니다. Vercel은 별도 global-config 디렉터리를 사용합니다.
 
-AWS는 기존 local profile별 슬롯을 추가하고 리전을 골라 CloudFormation, ECS, Amplify 브랜치를 찾습니다. profile 전에는 로컬 이름만 읽고 AWS 요청을 보내지 않습니다. SSO 만료 시 앱에서 SSO 로그인을 시작합니다. 계정 추가·제거와 대상 선택은 즉시 적용됩니다. 추가 계정을 제거해도 로그아웃하거나 CLI 설정·OS 자격 증명을 삭제하지 않습니다. 기본 GitHub/Vercel 계정은 제거할 수 없습니다. 패키지 앱은 GitHub CLI, Node.js, Vercel CLI를 포함하며 AWS 조회는 SDK를 씁니다.
+AWS는 기존 local profile별 슬롯을 추가하고 리전을 골라 CloudFormation, ECS, Amplify 브랜치를 찾습니다. profile 전에는 로컬 이름만 읽고 AWS 요청을 보내지 않습니다. SSO 만료 시 앱에서 SSO 로그인을 시작합니다. 계정 추가·제거와 대상 선택은 즉시 적용됩니다. 추가 CLI 계정을 제거해도 로그아웃하거나 CLI 설정·OS 자격 증명을 삭제하지 않습니다. Bitbucket 연결을 제거하면 앱이 보관한 해당 인증 정보도 삭제합니다. 기본 GitHub/Vercel 계정은 제거할 수 없습니다. 패키지 앱은 GitHub CLI, Node.js, Vercel CLI를 포함하며 AWS 조회는 SDK를 씁니다.
 
 ## 지원 범위
 
-공식 CLI를 설치·로그인한 뒤 앱을 재시작해 감지합니다. 지원 어댑터에는 토큰 입력, 배포 hook, 코드 삽입이 필요 없습니다.
+대부분의 서비스는 공식 CLI에 로그인한 뒤 앱을 재시작하면 연결할 수 있습니다. Bitbucket Cloud는 API 토큰으로 직접 연결합니다. 배포 hook이나 프로젝트 코드 수정은 필요 없습니다.
 
 | 플랫폼 | 조회 | 제한 |
 | --- | --- | --- |
@@ -45,9 +76,18 @@ AWS는 기존 local profile별 슬롯을 추가하고 리전을 골라 CloudForm
 | Railway, Netlify, Render | 배포 이력 | 공식 CLI와 서비스별 최근 목록 제한 |
 | Heroku, Fly.io | 앱 릴리스 | Fly는 머신 상태가 아닌 릴리스 상태 |
 | GitLab.com | 배포·CI 파이프라인 | self-managed, 실행자 판정 미지원 |
+| Bitbucket Cloud | 저장소별 Pipelines | 이메일·API 토큰 인증, 최근 이력·진행 상태 조회, 실행자 구분. Data Center 미지원 |
 | DigitalOcean, Google Cloud, Azure | 배포·Cloud Build/Run·Kudu | CLI별 범위·출력·페이지 제한 |
 
 EAS/Expo, fastlane, Cloudflare Pages/Workers, Firebase, Supabase는 카탈로그에서 제약만 안내하며 직접 조회를 지원하지 않습니다. 현재 CLI/API로 계정 전체 대상 탐색 또는 신뢰할 수 있는 배포 이력을 얻을 수 없기 때문입니다. CI 작업은 가능한 경우 GitHub Actions나 GitLab 파이프라인으로 감시합니다. [모바일 플랫폼 조사](docs/mobile-provider-notes.md)를 참고하세요. 새 어댑터는 합성 fixture와 명령 계약으로 검증했으며 실계정 로그인 검증은 아닙니다.
+
+### Bitbucket Cloud
+
+**설정 → 서비스 연결 → Bitbucket**에서 Atlassian 이메일과 [API 토큰](https://support.atlassian.com/bitbucket-cloud/docs/create-an-api-token/)을 입력한 뒤 모니터링할 저장소를 선택합니다. 토큰에는 `read:user:bitbucket`, `read:workspace:bitbucket`, `read:repository:bitbucket`, `read:pipeline:bitbucket` 권한이 필요합니다. 별도 CLI 설치는 필요 없습니다. 기본 계정명은 Bitbucket에서 가져오며 연필 버튼으로 별칭을 정할 수 있습니다. **토큰 변경**으로 같은 계정의 인증 정보를 바꾸면 기존 저장소 선택을 유지합니다.
+
+인증 정보는 OS 보안 저장소에만 보관하며 설정 파일·로그·설치 파일에는 넣지 않습니다. Bitbucket 연결을 제거하면 저장된 인증 정보도 삭제됩니다. 메뉴 막대 표시와 프로젝트별 알림은 기존 설정에서 관리합니다. 실행자를 확인할 수 없는 Pipeline은 ‘실행자 미확인’으로 남기며 ‘내 실행’에 포함하지 않습니다. 실제 Bitbucket 계정 연동은 미검증이며 가상 데이터로 테스트했습니다.
+
+최근 Pipeline은 20개씩 불러옵니다. 진행 상태는 실행·대기·일시정지 상태별로 병렬 조회하며 상태당 최대 50개를 확인합니다. 저장소 탐색은 최대 1,000개 저장소, 저장소 50페이지, 워크스페이스 10페이지로 제한하며 한도 초과나 일부 실패는 화면에 표시합니다.
 
 ## 패널, 알림, 상태
 
@@ -67,7 +107,7 @@ EAS/Expo, fastlane, Cloudflare Pages/Workers, Firebase, Supabase는 카탈로그
 
 저장소에는 서명된 초안 데스크톱 릴리스와 updater 메타데이터를 만들기 위한 수동 워크플로가 있습니다. 하지만 현재 빌드에는 updater 공개 키나 게시 릴리스 구성이 없어 앱 내 업데이트를 사용할 수 없다고 표시합니다. 공개 키·서명 배포물·공개 릴리스가 존재한다고 주장하지 않습니다. 자동 확인 기본값이 켜져도 릴리스 경로가 구성·게시되기 전에는 업데이트를 제공하지 않습니다.
 
-GitHub/Vercel 인증 흐름은 자격 증명을 관리하고 앱 설정으로 복사하지 않습니다. AWS는 선택 profile을 쓰며 키를 저장하지 않습니다. API 토큰/개인정보 입력 폼은 없습니다. 설정은 OS 앱 데이터의 `io.crowline.desktop/settings.json`에, 추가 CLI 설정도 그 아래에 보존하며 실행 캐시와 로그인 상태는 메모리에 둡니다. 진행 중에는 약 30초, 유휴면 약 120초마다 조회하고 오류 뒤에는 느려집니다.
+GitHub/Vercel 인증 흐름은 자격 증명을 관리하고 앱 설정으로 복사하지 않습니다. AWS는 선택 profile을 쓰며 키를 저장하지 않습니다. Bitbucket 이메일과 API 토큰은 OS 보안 저장소에 보관합니다. 설정은 OS 앱 데이터의 `io.crowline.desktop/settings.json`에, 추가 CLI 설정도 그 아래에 보존하며 실행 캐시와 로그인 상태는 메모리에 둡니다. 진행 중에는 약 30초, 유휴면 약 120초마다 조회하고 오류 뒤에는 느려집니다.
 
 시간 초과, API 한도, 부분 목록, 페이지 제한은 UI에 표시합니다. 백그라운드 Vercel SAML 재인증은 브라우저를 열 수 없습니다. 포함 CLI 의존성에는 알려진 보안 권고가 있고 Go 전이 모듈을 포함한 전체 바이너리 취약점 검증은 미완료입니다. [보안 검토](docs/security-review.md)를 참고하세요.
 

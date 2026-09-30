@@ -25,6 +25,7 @@ pub enum Provider {
     Heroku,
     Fly,
     Gitlab,
+    Bitbucket,
     Digitalocean,
     Gcloud,
     Azure,
@@ -66,6 +67,7 @@ impl Provider {
             Self::Heroku => "heroku",
             Self::Fly => "fly",
             Self::Gitlab => "gitlab",
+            Self::Bitbucket => "bitbucket",
             Self::Digitalocean => "digitalocean",
             Self::Gcloud => "gcloud",
             Self::Azure => "azure",
@@ -399,9 +401,23 @@ impl Account {
             return Err("Account IDs contain unsupported characters.".into());
         }
         match self.provider {
-            Provider::Github | Provider::Vercel => {
-                if self.profile.is_some() {
+            Provider::Github | Provider::Vercel | Provider::Bitbucket => {
+                if self.provider != Provider::Bitbucket && self.profile.is_some() {
                     return Err("GitHub and Vercel accounts cannot use AWS profiles.".into());
+                }
+                if self.provider == Provider::Bitbucket {
+                    if self.mode != AccountMode::Isolated
+                        || !self.id.starts_with("bitbucket:")
+                        || self.id["bitbucket:".len()..].parse::<uuid::Uuid>().is_err()
+                        || self.profile.as_deref().is_none_or(|value| {
+                            value.split_once('|').is_none_or(|(uuid, account_id)| {
+                                uuid.trim().is_empty() || account_id.trim().is_empty()
+                            })
+                        })
+                    {
+                        return Err("Bitbucket accounts must use an isolated connection ID.".into());
+                    }
+                    return Ok(());
                 }
                 let expected_local = match self.provider {
                     Provider::Github => LOCAL_GITHUB_ID,

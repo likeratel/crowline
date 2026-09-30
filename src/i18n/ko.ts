@@ -1,4 +1,18 @@
 export const ko = {
+  "bitbucket.reloadFailed":
+    "계정은 연결됐지만 화면을 갱신하지 못했습니다. 다시 조회해 주세요.",
+  "platform.bitbucket": "Atlassian 이메일과 API 토큰으로 연결합니다.",
+  "bitbucket.email": "Atlassian 이메일",
+  "bitbucket.token": "API 토큰",
+  "bitbucket.connect": "계정 연결",
+  "bitbucket.renew": "토큰 변경",
+  "bitbucket.createToken": "API 토큰 만들기",
+  "bitbucket.help":
+    "Bitbucket 권한이 있는 API 토큰을 만들고 아래 읽기 권한을 선택하세요.",
+  "bitbucket.connecting": "연결 중…",
+  "bitbucket.newAccount": "Bitbucket 계정 연결",
+  "bitbucket.invalid": "이메일과 API 토큰을 확인해 주세요.",
+
   "common.retry": "다시 시도",
   "common.refresh": "새로고침",
   "common.cancel": "취소",

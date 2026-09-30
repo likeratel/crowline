@@ -307,6 +307,10 @@ impl Toolchain {
     }
 
     pub fn invocation_for(&self, account: &Account) -> Result<Option<CliInvocation>, String> {
+        if account.provider == Provider::Bitbucket {
+            account.validate()?;
+            return Ok(None);
+        }
         self.prepare_account(account)?;
         let base = match (account.provider, account.mode) {
             (Provider::Github, AccountMode::Isolated) => {
@@ -363,7 +367,7 @@ impl Toolchain {
 
     pub fn prepare_account(&self, account: &Account) -> Result<(), String> {
         account.validate()?;
-        if account.mode == AccountMode::Isolated {
+        if account.mode == AccountMode::Isolated && account.provider != Provider::Bitbucket {
             create_private_directory(&self.account_config_root.join(&account.id))?;
         }
         Ok(())

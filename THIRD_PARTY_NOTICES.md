@@ -25,7 +25,8 @@ This inventory records the local bundle inputs and the files the build retains. 
 
 `public/providers/` contains vendored SVG marks downloaded on 2026-09-30:
 
-- Simple Icons: https://github.com/simple-icons/simple-icons (`develop/icons/`), CC0-1.0. Includes GitHub, Vercel, Railway, Netlify, Render, Cloudflare, Fly.io, GitLab, DigitalOcean, Google Cloud, Expo, Firebase, Supabase, and fastlane. License copy: `public/providers/simple-icons-LICENSE.md`.
+- Simple Icons: https://github.com/simple-icons/simple-icons (`develop/icons/`), CC0-1.0. Includes GitHub, Vercel, Railway, Netlify, Render, Cloudflare, Fly.io, GitLab, Bitbucket, DigitalOcean, Google Cloud, Expo, Firebase, Supabase, and fastlane. License copy: `public/providers/simple-icons-LICENSE.md`.
+- Bitbucket mark source: `https://cdn.simpleicons.org/bitbucket`, downloaded 2026-09-30 under the Simple Icons license above.
 - Devicon: https://github.com/devicons/devicon (`master/icons/`), MIT. Includes Amazon Web Services (`amazonwebservices-original-wordmark.svg`), Azure (`azure-original.svg`), and Heroku (`heroku-original.svg`). License copy: `public/providers/devicon-LICENSE`.
 
 Logos identify the corresponding services; trademarks belong to their owners. Assets are bundled locally and rendered in monochrome for the dark interface. The app makes no runtime requests to an icon CDN.

@@ -109,6 +109,13 @@ const platformDetails: Record<Provider, PlatformDefinition> = {
     supportsMultipleAccounts: false,
     supportsActorAttribution: false,
   },
+  bitbucket: {
+    canStartAppLogin: false,
+    cliCommand: null,
+    connectionSummary: { key: "platform.bitbucket" },
+    supportsMultipleAccounts: true,
+    supportsActorAttribution: true,
+  },
   gitlab: {
     canStartAppLogin: false,
     cliCommand: "glab auth login",

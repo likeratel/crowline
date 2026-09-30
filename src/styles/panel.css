@@ -186,11 +186,25 @@
   line-height: 1.4;
 }
 .panel-run-meta {
+  display: flex;
+  min-width: 0;
   font-size: 12px;
   color: #7f8692;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.panel-run-context {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.panel-run-actor {
+  flex-shrink: 0;
+  max-width: 48%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
 }
 .panel-run-time {
   flex-shrink: 0;

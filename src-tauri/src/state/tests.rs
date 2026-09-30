@@ -374,6 +374,145 @@ async fn remove_connection_prunes_its_notification_rule_and_pin() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
+fn bitbucket_credential(identity: &str) -> BitbucketCredential {
+    BitbucketCredential {
+        email: "person@example.invalid".into(),
+        token: format!("token-{identity}"),
+        uuid: format!("{{{identity}}}"),
+        account_id: format!("account-{identity}"),
+        display_name: "Bitbucket Person".into(),
+    }
+}
+
+#[tokio::test]
+async fn bitbucket_credential_is_not_serialized_and_failed_renewal_preserves_it() {
+    let directory = test_directory("bitbucket-renewal");
+    let state = test_state(&directory);
+    let original = bitbucket_credential("original");
+    let account = state
+        .connect_bitbucket(original.clone(), None, &NoopPublisher)
+        .await
+        .expect("connect bitbucket");
+    let persisted = std::fs::read_to_string(directory.join("settings.json")).unwrap();
+    assert!(!persisted.contains(&original.email));
+    assert!(!persisted.contains(&original.token));
+
+    let result = state
+        .connect_bitbucket(
+            bitbucket_credential("different"),
+            Some(&account.id),
+            &NoopPublisher,
+        )
+        .await;
+    assert!(result.is_err());
+    assert_eq!(
+        crate::credentials::get_bitbucket(&account.id)
+            .await
+            .unwrap(),
+        original
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn bitbucket_account_can_be_removed_after_credential_was_already_lost() {
+    let directory = test_directory("bitbucket-missing-credential-removal");
+    let state = test_state(&directory);
+    let account = state
+        .connect_bitbucket(bitbucket_credential("remove"), None, &NoopPublisher)
+        .await
+        .expect("connect bitbucket");
+    crate::credentials::delete_bitbucket(&account.id)
+        .await
+        .unwrap();
+
+    let settings = state
+        .remove_connection(&account.id, &NoopPublisher)
+        .await
+        .expect("remove account with missing credential");
+    assert!(!settings.accounts.iter().any(|item| item.id == account.id));
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn bitbucket_renewal_recovers_a_missing_credential_for_the_same_identity() {
+    let directory = test_directory("bitbucket-missing-credential-renewal");
+    let state = test_state(&directory);
+    let original = bitbucket_credential("renew");
+    let account = state
+        .connect_bitbucket(original.clone(), None, &NoopPublisher)
+        .await
+        .expect("connect bitbucket");
+    crate::credentials::delete_bitbucket(&account.id)
+        .await
+        .unwrap();
+    let renewed = BitbucketCredential {
+        token: "renewed-token".into(),
+        ..original
+    };
+
+    state
+        .connect_bitbucket(renewed.clone(), Some(&account.id), &NoopPublisher)
+        .await
+        .expect("renew missing credential");
+    assert_eq!(
+        crate::credentials::get_bitbucket(&account.id)
+            .await
+            .unwrap(),
+        renewed
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn failed_new_bitbucket_settings_save_cleans_up_credential() {
+    let directory = test_directory("bitbucket-create-rollback");
+    std::fs::write(&directory, b"blocks directory creation").unwrap();
+    let state = test_state(&directory);
+    let credential = bitbucket_credential("create-failure");
+
+    let result = state
+        .connect_bitbucket(credential.clone(), None, &NoopPublisher)
+        .await;
+
+    assert!(result.is_err());
+    assert_eq!(state.snapshot().await.settings, Settings::default());
+    assert!(!crate::credentials::test_contains_token(&credential.token));
+    let _ = std::fs::remove_file(directory);
+}
+
+#[tokio::test]
+async fn failed_bitbucket_removal_restores_credential_and_account() {
+    let directory = test_directory("bitbucket-remove-rollback");
+    let state = test_state(&directory);
+    let credential = bitbucket_credential("remove-failure");
+    let account = state
+        .connect_bitbucket(credential.clone(), None, &NoopPublisher)
+        .await
+        .expect("connect bitbucket");
+    std::fs::remove_file(directory.join("settings.json")).unwrap();
+    std::fs::remove_dir(&directory).unwrap();
+    std::fs::write(&directory, b"blocks directory recreation").unwrap();
+
+    let result = state.remove_connection(&account.id, &NoopPublisher).await;
+
+    assert!(result.is_err());
+    assert!(state
+        .snapshot()
+        .await
+        .settings
+        .accounts
+        .iter()
+        .any(|item| item.id == account.id));
+    assert_eq!(
+        crate::credentials::get_bitbucket(&account.id)
+            .await
+            .unwrap(),
+        credential
+    );
+    let _ = std::fs::remove_file(directory);
+}
+
 #[tokio::test]
 async fn simultaneous_account_mutations_do_not_lose_updates() {
     let directory = test_directory("concurrent-mutations");

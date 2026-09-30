@@ -43,6 +43,52 @@ const call = async <T>(
   args?: Record<string, unknown>,
 ): Promise<T> => rememberLanguage(schema.parse(await invoke(command, args)));
 export const bridge = {
+  connectBitbucket: async (
+    email: string,
+    token: string,
+    connectionId: string | null = null,
+  ) => {
+    const input = z
+      .object({
+        email: z.email().max(254),
+        token: z.string().min(1).max(4096),
+        connectionId: z.string().min(1).nullable(),
+      })
+      .parse({ email: email.trim(), token: token.trim(), connectionId });
+    if (!isPreview) return call("connect_bitbucket", accountSchema, input);
+    const existing = preview.settings.accounts.find(
+      (item) => item.id === connectionId && item.provider === "bitbucket",
+    );
+    if (connectionId && !existing)
+      throw new Error("Bitbucket account is unavailable.");
+    const account =
+      existing ??
+      accountSchema.parse({
+        id: `bitbucket:${crypto.randomUUID()}`,
+        provider: "bitbucket",
+        label: "Example developer",
+        mode: "isolated",
+        profile: null,
+      });
+    if (!existing)
+      preview = {
+        ...preview,
+        settings: {
+          ...preview.settings,
+          accounts: [...preview.settings.accounts, account],
+          panel: {
+            ...preview.settings.panel,
+            providers: [
+              ...new Set([
+                ...preview.settings.panel.providers,
+                account.provider,
+              ]),
+            ],
+          },
+        },
+      };
+    return account;
+  },
   change: async (change: SettingsChange) => {
     const validated = settingsChangeSchema.parse(change);
     if (!isPreview)

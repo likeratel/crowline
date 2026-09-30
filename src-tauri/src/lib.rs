@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod credentials;
 mod desktop;
 mod login;
 pub mod models;
@@ -79,6 +80,7 @@ pub fn run() {
             commands::refresh,
             commands::discover,
             commands::create_connection,
+            commands::connect_bitbucket,
             commands::remove_connection,
             commands::begin_login,
             commands::get_login_status,

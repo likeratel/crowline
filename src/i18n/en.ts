@@ -1,6 +1,20 @@
 import type { TranslationKey } from "./ko";
 
 export const en = {
+  "bitbucket.reloadFailed":
+    "Your account is connected, but the view could not be updated. Retry to reload it.",
+  "platform.bitbucket": "Connect with your Atlassian email and an API token.",
+  "bitbucket.email": "Atlassian email",
+  "bitbucket.token": "API token",
+  "bitbucket.connect": "Connect account",
+  "bitbucket.renew": "Update token",
+  "bitbucket.createToken": "Create API token",
+  "bitbucket.help":
+    "Create an API token for Bitbucket with the read permissions below.",
+  "bitbucket.connecting": "Connecting…",
+  "bitbucket.newAccount": "Connect a Bitbucket account",
+  "bitbucket.invalid": "Check your email and API token.",
+
   "common.retry": "Try again",
   "common.refresh": "Refresh",
   "common.cancel": "Cancel",

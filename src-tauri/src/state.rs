@@ -11,6 +11,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::{
     cli::Toolchain,
+    credentials::BitbucketCredential,
     models::{
         Account, AccountMode, Activity, ActivityStatus, Connection, ConnectionStatus, Issue,
         LoginStatus, Ownership, Provider, Scope, Settings, SettingsChange, Snapshot, Target,
@@ -324,6 +325,63 @@ impl AppState {
         Ok(account)
     }
 
+    pub async fn connect_bitbucket<P: SnapshotPublisher>(
+        &self,
+        credential: BitbucketCredential,
+        connection_id: Option<&str>,
+        publisher: &P,
+    ) -> Result<Account, String> {
+        let _publish_guard = self.publish_lock.lock().await;
+        let previous = self.snapshot.read().await.clone();
+        if let Some(connection_id) = connection_id {
+            let account = previous
+                .settings
+                .accounts
+                .iter()
+                .find(|account| {
+                    account.id == connection_id && account.provider == Provider::Bitbucket
+                })
+                .cloned()
+                .ok_or_else(|| "The selected Bitbucket account does not exist.".to_owned())?;
+            let expected_identity = account.profile.as_deref().unwrap_or_default();
+            if expected_identity != format!("{}|{}", credential.uuid, credential.account_id) {
+                return Err(
+                    "The API token belongs to a different Bitbucket account. Existing targets were preserved."
+                        .into(),
+                );
+            }
+            crate::credentials::set_bitbucket(connection_id, credential).await?;
+            return Ok(account);
+        }
+
+        let account = Account {
+            id: format!("bitbucket:{}", uuid::Uuid::new_v4()),
+            provider: Provider::Bitbucket,
+            label: credential.display_name.clone(),
+            mode: AccountMode::Isolated,
+            profile: Some(format!("{}|{}", credential.uuid, credential.account_id)),
+        };
+        account.validate()?;
+        let mut settings = previous.settings.clone();
+        settings.accounts.push(account.clone());
+        if !settings.panel.providers.contains(&Provider::Bitbucket) {
+            settings.panel.providers.push(Provider::Bitbucket);
+        }
+        settings.validate()?;
+        crate::credentials::set_bitbucket(&account.id, credential).await?;
+        if let Err(message) = self
+            .publish_settings_locked(settings, previous, publisher)
+            .await
+        {
+            let cleanup = crate::credentials::delete_bitbucket(&account.id).await;
+            return Err(match cleanup {
+                Ok(()) => message,
+                Err(cleanup) => format!("{message} Credential cleanup also failed: {cleanup}"),
+            });
+        }
+        Ok(account)
+    }
+
     pub async fn remove_connection<P: SnapshotPublisher>(
         &self,
         connection_id: &str,
@@ -334,6 +392,18 @@ impl AppState {
         }
         let _publish_guard = self.publish_lock.lock().await;
         let previous = self.snapshot.read().await.clone();
+        let removed_account = previous
+            .settings
+            .accounts
+            .iter()
+            .find(|account| account.id == connection_id)
+            .cloned()
+            .ok_or_else(|| "The selected account does not exist.".to_owned())?;
+        let restore_credential = if removed_account.provider == Provider::Bitbucket {
+            Some(crate::credentials::backup_and_delete_bitbucket(connection_id).await?)
+        } else {
+            None
+        };
         let mut settings = previous.settings.clone();
         let before = settings.accounts.len();
         settings
@@ -345,9 +415,25 @@ impl AppState {
         settings
             .targets
             .retain(|target| target.connection_id != connection_id);
-        let saved = self
+        let saved = match self
             .publish_settings_locked(settings, previous, publisher)
-            .await?;
+            .await
+        {
+            Ok(saved) => saved,
+            Err(message) => {
+                if let Some(credential) = restore_credential {
+                    let restore =
+                        crate::credentials::restore_bitbucket(connection_id, credential).await;
+                    return Err(match restore {
+                        Ok(()) => message,
+                        Err(restore) => {
+                            format!("{message} Credential rollback also failed: {restore}")
+                        }
+                    });
+                }
+                return Err(message);
+            }
+        };
         self.login_statuses.lock().await.remove(connection_id);
         Ok(saved)
     }

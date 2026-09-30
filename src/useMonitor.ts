@@ -73,6 +73,7 @@ export function useMonitor() {
     }
   }, []);
   const reload = useCallback(async () => {
+    setError(null);
     try {
       const revision = eventRevision.current;
       const value = await bridge.snapshot();
@@ -83,6 +84,7 @@ export function useMonitor() {
       }
     } catch (cause) {
       setError(errorMessage(cause));
+      throw cause;
     }
   }, []);
   const loadMore = useCallback(async (page: TargetHistory) => {

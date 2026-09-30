@@ -95,6 +95,20 @@ pub async fn create_connection(
 }
 
 #[tauri::command]
+pub async fn connect_bitbucket(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    email: String,
+    token: String,
+    connection_id: Option<String>,
+) -> Result<Account, String> {
+    let credential = crate::providers::bitbucket::authenticate(email, token).await?;
+    state
+        .connect_bitbucket(credential, connection_id.as_deref(), &app)
+        .await
+}
+
+#[tauri::command]
 pub async fn remove_connection(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -162,6 +176,16 @@ pub(crate) fn validate_external_url(value: &str) -> Result<(), String> {
     if url.scheme() != "https" || url.username() != "" || url.password().is_some() {
         return Err("Only secure provider links can be opened.".into());
     }
+    if url.host_str() == Some("id.atlassian.com") {
+        if url.path() == "/manage-profile/security/api-tokens"
+            && url.port().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none()
+        {
+            return Ok(());
+        }
+        return Err("This Atlassian link is not the API token page.".into());
+    }
     let host = url
         .host_str()
         .ok_or_else(|| "The link has no host.".to_owned())?;
@@ -180,6 +204,7 @@ pub(crate) fn validate_external_url(value: &str) -> Result<(), String> {
             "dashboard.heroku.com",
             "fly.io",
             "gitlab.com",
+            "bitbucket.org",
             "cloud.digitalocean.com",
             "console.cloud.google.com",
             "portal.azure.com",
@@ -226,6 +251,23 @@ mod tests {
         assert!(validate_external_url("https://device.sso.evil.amazonaws.com.example/").is_err());
         assert!(validate_external_url("https://github.com.evil.example/steal").is_err());
         assert!(validate_external_url("https://user:password@github.com/acme").is_err());
+        assert!(validate_external_url(
+            "https://id.atlassian.com/manage-profile/security/api-tokens"
+        )
+        .is_ok());
+        assert!(validate_external_url(
+            "https://id.atlassian.com/manage-profile/security/api-tokens?token=secret"
+        )
+        .is_err());
+        assert!(validate_external_url("https://id.atlassian.com/manage-profile").is_err());
+        assert!(validate_external_url(
+            "https://id.atlassian.com:8443/manage-profile/security/api-tokens"
+        )
+        .is_err());
+        assert!(validate_external_url(
+            "https://bitbucket.org/workspace/repository/pipelines/results/7"
+        )
+        .is_ok());
     }
 }
 

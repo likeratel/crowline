@@ -352,3 +352,60 @@ test("explains when all monitored targets are excluded from the panel", async ({
   ).toBeVisible();
   await expect(page.locator(".panel-run")).toHaveCount(0);
 });
+
+test("panel shows actors alongside long project names and marks missing actors", async ({
+  page,
+}) => {
+  await page.route(/\/src\/bridge\.ts(?:\?.*)?$/, async (route) => {
+    const response = await route.fetch();
+    const source = (await response.text()).replace(
+      "if (isPreview) return () => {};",
+      `if (isPreview) {
+        const update = (event) => { preview = event.detail; handler(preview); };
+        window.addEventListener("test-snapshot", update);
+        return () => window.removeEventListener("test-snapshot", update);
+      }`,
+    );
+    await route.fulfill({ response, body: source });
+  });
+  await page.goto("/");
+  await expect(page.locator(".panel-run-actor").first()).toContainText("alex");
+  await page.evaluate(async () => {
+    const modulePath = "/src/demo.ts";
+    const { demoSnapshot } = await import(modulePath);
+    const snapshot = demoSnapshot();
+    window.dispatchEvent(
+      new CustomEvent("test-snapshot", {
+        detail: {
+          ...snapshot,
+          settings: { ...snapshot.settings, scope: "all" },
+          activities: snapshot.activities.map(
+            (item: Record<string, unknown>, index: number) => ({
+              ...item,
+              project: "example-organization/" + "long-project-name".repeat(8),
+              branch: "feature/" + "long-branch".repeat(8),
+              actor:
+                index === 0 ? "example-developer" : index === 1 ? "   " : null,
+              ownership: index === 0 ? "mine" : "unknown",
+            }),
+          ),
+        },
+      }),
+    );
+  });
+  const actor = page.locator('.panel-run-actor[title="example-developer"]');
+  await expect(actor).toBeVisible();
+  await expect(
+    page
+      .locator(".panel-run-actor")
+      .filter({ hasText: "실행자 미확인" })
+      .first(),
+  ).toBeVisible();
+  const bounds = await actor.boundingBox();
+  expect(bounds?.width).toBeGreaterThan(50);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});

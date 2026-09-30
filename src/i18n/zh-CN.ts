@@ -1,6 +1,18 @@
 import type { TranslationKey } from "./ko";
 
 export const zhCN = {
+  "bitbucket.reloadFailed": "账号已连接，但页面更新失败。请重新加载。",
+  "platform.bitbucket": "使用 Atlassian 邮箱和 API 令牌连接。",
+  "bitbucket.email": "Atlassian 邮箱",
+  "bitbucket.token": "API 令牌",
+  "bitbucket.connect": "连接账号",
+  "bitbucket.renew": "更换令牌",
+  "bitbucket.createToken": "创建 API 令牌",
+  "bitbucket.help": "创建 Bitbucket API 令牌，并选择以下读取权限。",
+  "bitbucket.connecting": "正在连接…",
+  "bitbucket.newAccount": "连接 Bitbucket 账号",
+  "bitbucket.invalid": "请检查邮箱和 API 令牌。",
+
   "common.retry": "重试",
   "common.refresh": "刷新",
   "common.cancel": "取消",

@@ -490,9 +490,6 @@ async fn bounded_active(
     target: &Target,
     identity: Option<&str>,
 ) -> Result<ActivityPage, String> {
-    let Some(cli) = cli else {
-        return Err("The provider CLI is unavailable.".to_owned());
-    };
     tokio::time::timeout(REQUEST_TIMEOUT, catalog::active(cli, target, identity))
         .await
         .map_err(|_| "Active deployment lookup timed out; the recent list is partial.".to_owned())?
