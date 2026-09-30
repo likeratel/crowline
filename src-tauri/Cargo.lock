@@ -325,6 +325,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-amplify"
+version = "1.124.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91c73d022581760ade54de8491fc6cba16df24d21477043f0caf76ca61185260"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-cloudformation"
 version = "1.129.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1105,6 +1130,7 @@ version = "0.1.0"
 dependencies = [
  "atomicwrites",
  "aws-config",
+ "aws-sdk-amplify",
  "aws-sdk-cloudformation",
  "aws-sdk-ecs",
  "aws-sdk-sts",

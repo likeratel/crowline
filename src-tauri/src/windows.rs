@@ -20,17 +20,20 @@ pub(crate) struct PanelFocusState {
 }
 
 impl PanelFocusState {
-    fn prepare_to_show(&self) {
+    fn panel_shown(&self) {
+        self.hide_on_blur.store(true, Ordering::SeqCst);
+    }
+
+    fn panel_hidden(&self) {
         self.hide_on_blur.store(false, Ordering::SeqCst);
     }
 
-    pub(crate) fn focus_changed(&self, focused: bool) -> bool {
-        if focused {
-            self.hide_on_blur.store(true, Ordering::SeqCst);
-            false
-        } else {
-            self.hide_on_blur.swap(false, Ordering::SeqCst)
-        }
+    pub(crate) fn should_hide_for_focus_change(
+        &self,
+        focused_event: bool,
+        currently_focused: bool,
+    ) -> bool {
+        !focused_event && !currently_focused && self.hide_on_blur.swap(false, Ordering::SeqCst)
     }
 }
 
@@ -47,11 +50,15 @@ pub(crate) fn hide_panel(app: &AppHandle) -> Result<(), String> {
         .get_webview_window(MAIN_LABEL)
         .ok_or_else(|| "The status panel is unavailable.".to_owned())?;
     if let Some(state) = app.try_state::<PanelFocusState>() {
-        state.prepare_to_show();
+        state.panel_hidden();
     }
-    panel
-        .hide()
-        .map_err(|_| "The status panel could not be hidden.".to_owned())
+    if panel.hide().is_err() {
+        if let Some(state) = app.try_state::<PanelFocusState>() {
+            state.panel_shown();
+        }
+        return Err("The status panel could not be hidden.".to_owned());
+    }
+    Ok(())
 }
 
 pub(crate) fn show_panel(app: &AppHandle, anchor: Option<(Rect, PhysicalPosition<f64>)>) {
@@ -59,20 +66,16 @@ pub(crate) fn show_panel(app: &AppHandle, anchor: Option<(Rect, PhysicalPosition
         return;
     };
 
-    if let Some(state) = app.try_state::<PanelFocusState>() {
-        state.prepare_to_show();
-    }
     #[cfg(target_os = "macos")]
     let _ = app.show();
     if let Some((rect, click_position)) = anchor {
         position_panel(app, &panel, rect, click_position);
     }
     let _ = panel.unminimize();
-    let _ = panel.show();
-    let _ = panel.set_focus();
-    if panel.is_focused().unwrap_or(false) {
+    if panel.show().is_ok() {
+        let _ = panel.set_focus();
         if let Some(state) = app.try_state::<PanelFocusState>() {
-            state.focus_changed(true);
+            state.panel_shown();
         }
     }
 }
@@ -83,7 +86,7 @@ pub(crate) fn toggle_panel(app: &AppHandle, rect: Rect, click_position: Physical
     };
 
     if panel.is_visible().unwrap_or(false) {
-        let _ = panel.hide();
+        let _ = hide_panel(app);
     } else {
         show_panel(app, Some((rect, click_position)));
     }
@@ -97,9 +100,10 @@ pub(crate) fn open_dashboard(app: &AppHandle) -> Result<(), String> {
         dashboard
             .show()
             .map_err(|_| "The dashboard could not be shown.".to_owned())?;
-        return dashboard
+        dashboard
             .set_focus()
-            .map_err(|_| "The dashboard could not be focused.".to_owned());
+            .map_err(|_| "The dashboard could not be focused.".to_owned())?;
+        return hide_panel(app);
     }
 
     WebviewWindowBuilder::new(
@@ -118,8 +122,8 @@ pub(crate) fn open_dashboard(app: &AppHandle) -> Result<(), String> {
     .background_color(Color(13, 14, 16, 255))
     .center()
     .build()
-    .map(|_| ())
-    .map_err(|_| "The dashboard could not be opened.".to_owned())
+    .map_err(|_| "The dashboard could not be opened.".to_owned())?;
+    hide_panel(app)
 }
 
 fn position_panel(
@@ -261,16 +265,42 @@ mod tests {
     }
 
     #[test]
-    fn panel_hides_only_after_it_has_received_focus() {
+    fn shown_panel_hides_on_blur_without_waiting_for_a_focus_event() {
         let state = PanelFocusState::default();
 
-        assert!(!state.focus_changed(false));
-        assert!(!state.focus_changed(true));
-        assert!(state.focus_changed(false));
-        assert!(!state.focus_changed(false));
+        assert!(!state.should_hide_for_focus_change(false, false));
+        state.panel_shown();
+        assert!(state.should_hide_for_focus_change(false, false));
+        assert!(!state.should_hide_for_focus_change(false, false));
+    }
 
-        state.focus_changed(true);
-        state.prepare_to_show();
-        assert!(!state.focus_changed(false));
+    #[test]
+    fn explicit_hide_ignores_late_focus_events() {
+        let state = PanelFocusState::default();
+
+        state.panel_shown();
+        state.panel_hidden();
+        assert!(!state.should_hide_for_focus_change(true, true));
+        assert!(!state.should_hide_for_focus_change(false, false));
+    }
+
+    #[test]
+    fn stale_blur_does_not_disarm_a_focused_panel() {
+        let state = PanelFocusState::default();
+
+        state.panel_shown();
+        assert!(!state.should_hide_for_focus_change(false, true));
+        assert!(state.should_hide_for_focus_change(false, false));
+    }
+
+    #[test]
+    fn reopened_panel_arms_the_next_blur() {
+        let state = PanelFocusState::default();
+
+        state.panel_shown();
+        assert!(state.should_hide_for_focus_change(false, false));
+        state.panel_shown();
+        assert!(!state.should_hide_for_focus_change(true, true));
+        assert!(state.should_hide_for_focus_change(false, false));
     }
 }

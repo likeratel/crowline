@@ -1,6 +1,27 @@
 import { z } from "zod";
 
-export const providerSchema = z.enum(["github", "vercel", "aws"]);
+export const PROVIDERS = [
+  "github",
+  "vercel",
+  "aws",
+  "github-deployments",
+  "railway",
+  "netlify",
+  "render",
+  "cloudflare-pages",
+  "cloudflare-workers",
+  "heroku",
+  "fly",
+  "gitlab",
+  "digitalocean",
+  "gcloud",
+  "azure",
+  "eas",
+  "firebase",
+  "supabase",
+  "fastlane",
+] as const;
+export const providerSchema = z.enum(PROVIDERS);
 export const statusSchema = z.enum([
   "queued",
   "running",
@@ -30,11 +51,24 @@ export const targetSchema = z.object({
   description: optionalText,
   metadata: z.record(z.string(), z.string()),
 });
+export const panelSettingsSchema = z.object({
+  providers: z
+    .array(providerSchema)
+    .max(PROVIDERS.length)
+    .default(["github", "vercel", "aws"]),
+  hiddenTargets: z.array(z.string().min(1).max(1600)).max(500).default([]),
+  showActive: z.boolean().default(true),
+  showCompleted: z.boolean().default(true),
+  rowLimit: z.number().int().min(1).max(10).default(5),
+});
+export type PanelSettings = z.infer<typeof panelSettingsSchema>;
+
 export const settingsSchema = z.object({
   scope: z.enum(["mine", "all"]),
   historyHours: z.union([z.literal(24), z.literal(168)]),
   targets: z.array(targetSchema),
   accounts: z.array(accountSchema),
+  panel: panelSettingsSchema.prefault({}),
 });
 export const connectionSchema = z.object({
   connectionId: z.string(),
@@ -74,12 +108,23 @@ export const issueSchema = z.object({
   message: z.string(),
   targetId: optionalText,
 });
+export const targetHistorySchema = z.object({
+  connectionId: z.string(),
+  targetId: z.string(),
+  provider: providerSchema,
+  nextCursor: z.string().nullish(),
+  checkedAt: date,
+  generation: z.number().int().nonnegative(),
+});
+export type TargetHistory = z.infer<typeof targetHistorySchema>;
 export const snapshotSchema = z.object({
   settings: settingsSchema,
   connections: z.array(connectionSchema),
   activities: z.array(activitySchema),
   issues: z.array(issueSchema),
   refreshing: z.boolean(),
+  history: z.array(targetHistorySchema).default([]),
+  pendingTargets: z.array(z.string()).default([]),
   lastUpdatedAt: date.nullish(),
 });
 export const discoverySchema = z.object({
@@ -105,11 +150,26 @@ export type Snapshot = z.infer<typeof snapshotSchema>;
 export type Connection = z.infer<typeof connectionSchema>;
 export type Discovery = z.infer<typeof discoverySchema>;
 export type LoginStatus = z.infer<typeof loginSchema>;
-export const PROVIDERS: readonly Provider[] = ["github", "vercel", "aws"];
 export const PROVIDER_NAMES: Record<Provider, string> = {
   github: "GitHub Actions",
   vercel: "Vercel",
   aws: "AWS",
+  "github-deployments": "GitHub Deployments",
+  railway: "Railway",
+  netlify: "Netlify",
+  render: "Render",
+  "cloudflare-pages": "Cloudflare Pages",
+  "cloudflare-workers": "Cloudflare Workers",
+  heroku: "Heroku",
+  fly: "Fly.io",
+  gitlab: "GitLab",
+  digitalocean: "DigitalOcean",
+  gcloud: "Google Cloud",
+  azure: "Azure App Service",
+  eas: "Expo / EAS",
+  firebase: "Firebase",
+  supabase: "Supabase",
+  fastlane: "fastlane",
 };
 export const STATUS_LABELS: Record<Activity["status"], string> = {
   queued: "대기 중",
@@ -122,7 +182,20 @@ export const STATUS_LABELS: Record<Activity["status"], string> = {
   unknown: "상태 미확인",
 };
 export const isActive = (activity: Activity) =>
-  ["queued", "running", "waiting"].includes(activity.status);
+  ["queued", "running", "waiting"].includes(activity.status) &&
+  !(
+    activity.provider === "vercel" &&
+    activity.rawStatus.toUpperCase() === "BLOCKED"
+  );
+
+const MAX_ACTIVE_AGE_MS = 24 * 60 * 60 * 1000;
+export const isVisibleActivity = (activity: Activity, now = Date.now()) =>
+  !(
+    activity.provider === "vercel" &&
+    activity.rawStatus.toUpperCase() === "BLOCKED"
+  ) &&
+  (!isActive(activity) ||
+    Date.parse(activity.startedAt) >= now - MAX_ACTIVE_AGE_MS);
 
 export function visibleActivities(
   snapshot: Snapshot,
@@ -165,6 +238,7 @@ export function visibleActivities(
   );
   const filtered = Object.values(reconciled).filter(
     (activity) =>
+      isVisibleActivity(activity, now) &&
       (snapshot.settings.scope === "all" || activity.ownership === "mine") &&
       (isActive(activity) ||
         activity.status === "unknown" ||
@@ -208,4 +282,44 @@ export function duration(activity: Activity, now = Date.now()): string {
   );
   if (seconds < 60) return `${seconds}초`;
   return `${Math.floor(seconds / 60)}분 ${seconds % 60}초`;
+}
+
+export function panelActivities(snapshot: Snapshot, now = Date.now()) {
+  const { panel } = snapshot.settings;
+  const activities = snapshot.activities.filter(
+    (activity) =>
+      panel.providers.includes(activity.provider) &&
+      snapshot.settings.targets.some(
+        (target) =>
+          target.provider === activity.provider &&
+          target.connectionId === activity.connectionId &&
+          target.id === activity.targetId &&
+          !panel.hiddenTargets.includes(targetKey(target)),
+      ),
+  );
+  return visibleActivities({ ...snapshot, activities }, "all", "", now);
+}
+
+export function latestCompleted(activities: Activity[]): Activity[] {
+  return Object.values(
+    activities
+      .filter((item) => !isActive(item) && item.status !== "unknown")
+      .reduce<Record<string, Activity>>((groups, item) => {
+        // Account and stable target IDs prevent same-name projects from merging.
+        const key = JSON.stringify([
+          item.provider,
+          item.connectionId,
+          item.targetId,
+          item.kind,
+          item.branch,
+          item.provider === "github" ? item.title : "",
+        ]);
+        const previous = groups[key];
+        return !previous ||
+          Date.parse(item.finishedAt ?? item.updatedAt) >
+            Date.parse(previous.finishedAt ?? previous.updatedAt)
+          ? { ...groups, [key]: item }
+          : groups;
+      }, {}),
+  );
 }

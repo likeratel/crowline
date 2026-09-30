@@ -50,6 +50,7 @@ pub async fn discover(
             return aws::discover(None, None, AWS_DISCOVERY_ID).await;
         }
         (_, Some(connection_id)) => connection_id,
+        (provider, None) => format!("{}:local", provider.as_str()),
     };
     let account = state.account(&connection_id, provider).await?;
     let cli = state.tools.invocation_for(&account)?;
@@ -66,6 +67,7 @@ pub async fn discover(
             }
             aws::discover(Some(bound), region, &connection_id).await
         }
+        _ => Ok(crate::providers::catalog::discover(cli.as_ref(), &account).await),
     }
 }
 
@@ -143,7 +145,7 @@ fn validate_optional(label: &str, value: Option<&str>) -> Result<(), String> {
     }
 }
 
-fn validate_external_url(value: &str) -> Result<(), String> {
+pub(crate) fn validate_external_url(value: &str) -> Result<(), String> {
     if value.len() > 2_048 {
         return Err("The link is too long.".into());
     }
@@ -159,7 +161,27 @@ fn validate_external_url(value: &str) -> Result<(), String> {
         || host.ends_with(".vercel.app")
         || host == "console.aws.amazon.com"
         || host.ends_with(".console.aws.amazon.com")
-        || is_aws_device_host(host);
+        || is_aws_device_host(host)
+        || [
+            "railway.com",
+            "railway.app",
+            "app.netlify.com",
+            "dashboard.render.com",
+            "dash.cloudflare.com",
+            "dashboard.heroku.com",
+            "fly.io",
+            "gitlab.com",
+            "cloud.digitalocean.com",
+            "console.cloud.google.com",
+            "portal.azure.com",
+            "expo.dev",
+            "console.firebase.google.com",
+            "cli-auth.heroku.com",
+            "microsoft.com",
+            "login.microsoftonline.com",
+            "accounts.google.com",
+        ]
+        .contains(&host);
     if !allowed {
         return Err("This link is outside the supported provider hosts.".into());
     }
@@ -196,4 +218,18 @@ mod tests {
         assert!(validate_external_url("https://github.com.evil.example/steal").is_err());
         assert!(validate_external_url("https://user:password@github.com/acme").is_err());
     }
+}
+
+#[tauri::command]
+pub async fn load_more(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    connection_id: String,
+    target_id: String,
+    cursor: String,
+    generation: u64,
+) -> Result<Snapshot, String> {
+    state
+        .load_more(&connection_id, &target_id, &cursor, generation, &app)
+        .await
 }

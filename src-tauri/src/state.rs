@@ -1,17 +1,13 @@
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
 use chrono::Utc;
-use futures::future::join_all;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
-use tokio::sync::{Mutex, RwLock, Semaphore};
+use tokio::sync::{Mutex, RwLock};
 
 use crate::{
     cli::Toolchain,
@@ -20,15 +16,13 @@ use crate::{
         LoginStatus, Ownership, Provider, Scope, Settings, Snapshot, Target, LOCAL_GITHUB_ID,
         LOCAL_VERCEL_ID,
     },
-    providers::{aws, github, vercel},
+    providers::aws,
     settings::SettingsStore,
 };
 
 const ACTIVE_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const IDLE_POLL_INTERVAL: Duration = Duration::from_secs(120);
 const ERROR_POLL_INTERVAL: Duration = Duration::from_secs(240);
-const COLLECTION_TIMEOUT: Duration = Duration::from_secs(90);
-const MAX_CONCURRENT_ACCOUNTS: usize = 6;
 
 pub(crate) trait SnapshotPublisher {
     fn publish_snapshot(&self, snapshot: &Snapshot);
@@ -56,14 +50,9 @@ pub struct AppState {
     refresh_lock: Mutex<()>,
     publish_lock: Mutex<()>,
     settings_revision: AtomicU64,
+    refresh_epoch: AtomicU64,
+    history_lock: Mutex<()>,
     pub login_statuses: Mutex<HashMap<String, LoginStatus>>,
-}
-
-struct AccountRefresh {
-    connection: Connection,
-    targets: Vec<Target>,
-    activities: Vec<Activity>,
-    issues: Vec<Issue>,
 }
 
 impl AppState {
@@ -90,6 +79,8 @@ impl AppState {
             refresh_lock: Mutex::new(()),
             publish_lock: Mutex::new(()),
             settings_revision: AtomicU64::new(0),
+            refresh_epoch: AtomicU64::new(0),
+            history_lock: Mutex::new(()),
             login_statuses: Mutex::new(HashMap::new()),
         }
     }
@@ -186,6 +177,8 @@ impl AppState {
             .collect();
         let updated = Snapshot {
             settings: saved.clone(),
+            history: Vec::new(),
+            pending_targets: Vec::new(),
             connections: previous
                 .connections
                 .into_iter()
@@ -254,6 +247,21 @@ impl AppState {
                     profile: Some(profile),
                 }
             }
+            _ => {
+                if profile.is_some() {
+                    return Err("Only AWS connections accept a profile.".into());
+                }
+                if !crate::providers::catalog::supported(provider) {
+                    return Err(crate::providers::catalog::limitation(provider).to_owned());
+                }
+                Account {
+                    id: format!("{}:local", provider.as_str()),
+                    provider,
+                    label,
+                    mode: AccountMode::Local,
+                    profile: None,
+                }
+            }
         };
         account.validate()?;
         self.tools.prepare_account(&account)?;
@@ -267,7 +275,17 @@ impl AppState {
         {
             return Err("That AWS profile already has a connection.".into());
         }
+        if settings
+            .accounts
+            .iter()
+            .any(|existing| existing.id == account.id)
+        {
+            return Err("This local CLI session is already connected.".into());
+        }
         settings.accounts.push(account.clone());
+        if !settings.panel.providers.contains(&provider) {
+            settings.panel.providers.push(provider);
+        }
         settings.validate()?;
         self.publish_settings_locked(settings, previous, publisher)
             .await?;
@@ -325,235 +343,9 @@ impl AppState {
         }
         exists
     }
-
-    pub async fn refresh<P: SnapshotPublisher>(&self, publisher: &P) -> Snapshot {
-        let Ok(_refresh_guard) = self.refresh_lock.try_lock() else {
-            return self.snapshot().await;
-        };
-        loop {
-            let (previous, revision) = {
-                let _publish_guard = self.publish_lock.lock().await;
-                let previous = self.snapshot().await;
-                let revision = self.settings_revision.load(Ordering::SeqCst);
-                let refreshing = Snapshot {
-                    refreshing: true,
-                    ..previous.clone()
-                };
-                *self.snapshot.write().await = refreshing.clone();
-                publisher.publish_snapshot(&refreshing);
-                (previous, revision)
-            };
-            let completed = self.refresh_snapshot(previous).await;
-            let _publish_guard = self.publish_lock.lock().await;
-            if self.settings_revision.load(Ordering::SeqCst) != revision {
-                continue;
-            }
-            *self.snapshot.write().await = completed.clone();
-            publisher.publish_snapshot(&completed);
-            return completed;
-        }
-    }
-
-    async fn refresh_snapshot(&self, previous: Snapshot) -> Snapshot {
-        let settings = previous.settings.clone();
-        let concurrency = Arc::new(Semaphore::new(MAX_CONCURRENT_ACCOUNTS));
-        let accounts = settings.accounts.clone();
-        let targets = &settings.targets;
-        let history_hours = settings.history_hours;
-        let futures = accounts.into_iter().map(|account| {
-            let concurrency = concurrency.clone();
-            async move {
-                let _permit = concurrency.acquire_owned().await.ok();
-                self.refresh_account(&account, targets, history_hours).await
-            }
-        });
-        let results = join_all(futures).await;
-        let probed_connections: Vec<Connection> = results
-            .iter()
-            .map(|result| result.connection.clone())
-            .collect();
-        let connections = retain_last_confirmed_accounts(&previous.connections, probed_connections);
-        let cached =
-            partition_cache_by_account(&previous.activities, &previous.connections, &connections);
-
-        let mut activities = Vec::new();
-        let mut issues = Vec::new();
-        let mut any_selected_success = false;
-        for result in results {
-            any_selected_success |=
-                provider_refresh_succeeded(&result.targets, &result.activities, &result.issues);
-            activities.extend(merge_with_cache(
-                &result.connection,
-                &result.targets,
-                result.activities,
-                &result.issues,
-                &cached,
-                &mut issues,
-            ));
-            issues.extend(result.issues);
-        }
-        activities.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-        let mut seen = HashSet::new();
-        activities.retain(|activity| {
-            seen.insert((
-                activity.connection_id.clone(),
-                activity.provider,
-                activity.id.clone(),
-            ))
-        });
-        let connection_success = connections
-            .iter()
-            .any(|connection| connection.status == ConnectionStatus::Connected);
-        let refresh_succeeded =
-            any_selected_success || (settings.targets.is_empty() && connection_success);
-        Snapshot {
-            settings,
-            connections,
-            activities,
-            issues,
-            refreshing: false,
-            last_updated_at: refresh_succeeded
-                .then(|| Utc::now().to_rfc3339())
-                .or(previous.last_updated_at),
-        }
-    }
-
-    async fn refresh_account(
-        &self,
-        account: &Account,
-        all_targets: &[Target],
-        history_hours: u32,
-    ) -> AccountRefresh {
-        let targets = all_targets
-            .iter()
-            .filter(|target| target.connection_id == account.id)
-            .cloned()
-            .collect::<Vec<_>>();
-        let cli = match self.tools.invocation_for(account) {
-            Ok(cli) => cli,
-            Err(message) => return failed_account_refresh(account, targets, message),
-        };
-        let connection = match account.provider {
-            Provider::Github => github::connection(cli.as_ref(), &account.id).await,
-            Provider::Vercel => vercel::connection(cli.as_ref(), &account.id).await,
-            Provider::Aws => {
-                let region = targets
-                    .first()
-                    .and_then(|target| target.metadata.get("region"))
-                    .cloned();
-                aws::connection(account.profile.clone(), region, &account.id).await
-            }
-        };
-        if targets.is_empty() {
-            return AccountRefresh {
-                connection,
-                targets,
-                activities: Vec::new(),
-                issues: Vec::new(),
-            };
-        }
-        if connection.status != ConnectionStatus::Connected {
-            let message = connection.message.clone().unwrap_or_else(|| {
-                format!("{} connection is unavailable.", account.provider.as_str())
-            });
-            return AccountRefresh {
-                connection,
-                targets,
-                activities: Vec::new(),
-                issues: vec![Issue {
-                    provider: account.provider,
-                    connection_id: Some(account.id.clone()),
-                    message,
-                    target_id: None,
-                }],
-            };
-        }
-        let identity = connection.account.as_deref();
-        let collection = match account.provider {
-            Provider::Github => {
-                tokio::time::timeout(
-                    COLLECTION_TIMEOUT,
-                    github::collect(cli.as_ref(), &targets, history_hours, identity, &account.id),
-                )
-                .await
-            }
-            Provider::Vercel => {
-                tokio::time::timeout(
-                    COLLECTION_TIMEOUT,
-                    vercel::collect(cli.as_ref(), &targets, history_hours, &account.id),
-                )
-                .await
-            }
-            Provider::Aws => {
-                tokio::time::timeout(COLLECTION_TIMEOUT, aws::collect(&targets, history_hours))
-                    .await
-            }
-        };
-        let (activities, issues) = collection_result(account, collection);
-        AccountRefresh {
-            connection,
-            targets,
-            activities,
-            issues,
-        }
-    }
 }
 
-fn failed_account_refresh(
-    account: &Account,
-    targets: Vec<Target>,
-    message: String,
-) -> AccountRefresh {
-    AccountRefresh {
-        connection: Connection::disconnected(
-            &account.id,
-            account.provider,
-            ConnectionStatus::Error,
-            message.clone(),
-        ),
-        targets,
-        activities: Vec::new(),
-        issues: vec![Issue {
-            provider: account.provider,
-            connection_id: Some(account.id.clone()),
-            message,
-            target_id: None,
-        }],
-    }
-}
-
-fn collection_result(
-    account: &Account,
-    result: Result<(Vec<Activity>, Vec<Issue>), tokio::time::error::Elapsed>,
-) -> (Vec<Activity>, Vec<Issue>) {
-    result.unwrap_or_else(|_| {
-        (
-            Vec::new(),
-            vec![Issue {
-                provider: account.provider,
-                connection_id: Some(account.id.clone()),
-                message: format!(
-                    "{} activity collection timed out. Cached activity is retained when available.",
-                    account.provider.as_str()
-                ),
-                target_id: None,
-            }],
-        )
-    })
-}
-
-fn provider_refresh_succeeded(targets: &[Target], fresh: &[Activity], issues: &[Issue]) -> bool {
-    !targets.is_empty()
-        && !issues.iter().any(|issue| issue.target_id.is_none())
-        && (!fresh.is_empty()
-            || issues.is_empty()
-            || issues
-                .iter()
-                .filter_map(|issue| issue.target_id.as_ref())
-                .count()
-                < targets.len())
-}
-
+#[cfg(test)]
 fn merge_with_cache(
     connection: &Connection,
     targets: &[Target],
@@ -662,6 +454,7 @@ fn poll_interval(snapshot: &Snapshot) -> Duration {
         .collect();
     if snapshot.activities.iter().any(|activity| {
         connected.contains(activity.connection_id.as_str())
+            && crate::panel::visible_activity(activity, Utc::now())
             && matches!(
                 activity.status,
                 ActivityStatus::Queued | ActivityStatus::Running | ActivityStatus::Waiting
@@ -691,12 +484,15 @@ fn update_tray<R: Runtime>(app: &AppHandle<R>, snapshot: &Snapshot) {
 
 fn active_tray_count(snapshot: &Snapshot) -> usize {
     let mut runs = HashMap::<(Provider, &str), (&Activity, bool)>::new();
+    if !snapshot.settings.panel.show_active {
+        return 0;
+    }
+    let now = Utc::now();
     for activity in snapshot.activities.iter().filter(|activity| {
-        snapshot.settings.targets.iter().any(|target| {
-            target.connection_id == activity.connection_id
-                && target.provider == activity.provider
-                && target.id == activity.target_id
-        })
+        snapshot
+            .settings
+            .panel
+            .includes(activity, &snapshot.settings)
     }) {
         let key = (activity.provider, activity.id.as_str());
         let any_mine =
@@ -711,6 +507,7 @@ fn active_tray_count(snapshot: &Snapshot) -> usize {
         .filter(|(activity, any_mine)| {
             (snapshot.settings.scope == Scope::All || *any_mine)
                 && is_active_status(activity.status)
+                && crate::panel::visible_activity(activity, now)
         })
         .count()
 }
@@ -719,7 +516,7 @@ fn newer_observation<'a>(current: &'a Activity, candidate: &'a Activity) -> &'a 
     if candidate.updated_at > current.updated_at
         || candidate.updated_at == current.updated_at
             && is_active_status(current.status)
-            && is_terminal_status(candidate.status)
+            && (is_terminal_status(candidate.status) || crate::panel::is_blocked(candidate))
     {
         candidate
     } else {
@@ -746,3 +543,5 @@ fn is_active_status(status: ActivityStatus) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+mod refresh;

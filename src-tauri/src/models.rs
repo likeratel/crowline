@@ -11,11 +11,27 @@ pub const LOCAL_VERCEL_ID: &str = "vercel:local";
 pub const AWS_DISCOVERY_ID: &str = "aws:local";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum Provider {
     Github,
     Vercel,
     Aws,
+    GithubDeployments,
+    Railway,
+    Netlify,
+    Render,
+    CloudflarePages,
+    CloudflareWorkers,
+    Heroku,
+    Fly,
+    Gitlab,
+    Digitalocean,
+    Gcloud,
+    Azure,
+    Eas,
+    Firebase,
+    Supabase,
+    Fastlane,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -41,6 +57,22 @@ impl Provider {
             Self::Github => "github",
             Self::Vercel => "vercel",
             Self::Aws => "aws",
+            Self::GithubDeployments => "github-deployments",
+            Self::Railway => "railway",
+            Self::Netlify => "netlify",
+            Self::Render => "render",
+            Self::CloudflarePages => "cloudflare-pages",
+            Self::CloudflareWorkers => "cloudflare-workers",
+            Self::Heroku => "heroku",
+            Self::Fly => "fly",
+            Self::Gitlab => "gitlab",
+            Self::Digitalocean => "digitalocean",
+            Self::Gcloud => "gcloud",
+            Self::Azure => "azure",
+            Self::Eas => "eas",
+            Self::Firebase => "firebase",
+            Self::Supabase => "supabase",
+            Self::Fastlane => "fastlane",
         }
     }
 }
@@ -98,6 +130,8 @@ pub struct Settings {
     pub targets: Vec<Target>,
     #[serde(default = "default_accounts")]
     pub accounts: Vec<Account>,
+    #[serde(default)]
+    pub panel: crate::panel::PanelSettings,
 }
 
 impl Default for Settings {
@@ -107,6 +141,7 @@ impl Default for Settings {
             history_hours: default_history_hours(),
             targets: Vec::new(),
             accounts: default_accounts(),
+            panel: crate::panel::PanelSettings::default(),
         }
     }
 }
@@ -182,6 +217,7 @@ impl Settings {
                         })
                         .clone()
                 }
+                provider => format!("{}:local", provider.as_str()),
             };
             changed = true;
         }
@@ -189,6 +225,7 @@ impl Settings {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.panel.validate()?;
         if !matches!(self.history_hours, 24 | 168) {
             return Err("History must be either 24 or 168 hours.".into());
         }
@@ -257,7 +294,7 @@ impl Account {
                 let expected_local = match self.provider {
                     Provider::Github => LOCAL_GITHUB_ID,
                     Provider::Vercel => LOCAL_VERCEL_ID,
-                    Provider::Aws => unreachable!(),
+                    _ => unreachable!(),
                 };
                 if (self.mode == AccountMode::Local) != (self.id == expected_local) {
                     return Err(
@@ -276,6 +313,14 @@ impl Account {
                         .as_deref()
                         .ok_or_else(|| "AWS accounts require a profile.".to_owned())?,
                 )?;
+            }
+            _ => {
+                if self.mode != AccountMode::Local
+                    || self.profile.is_some()
+                    || self.id != format!("{}:local", self.provider.as_str())
+                {
+                    return Err("This provider reuses one existing local CLI session.".into());
+                }
             }
         }
         if self.id == LOCAL_GITHUB_ID
@@ -401,6 +446,10 @@ pub struct Snapshot {
     pub issues: Vec<Issue>,
     pub refreshing: bool,
     pub last_updated_at: Option<String>,
+    #[serde(default)]
+    pub history: Vec<TargetHistory>,
+    #[serde(default)]
+    pub pending_targets: Vec<String>,
 }
 
 impl Snapshot {
@@ -412,6 +461,8 @@ impl Snapshot {
             issues: Vec::new(),
             refreshing: false,
             last_updated_at: None,
+            history: Vec::new(),
+            pending_targets: Vec::new(),
         }
     }
 }
@@ -470,5 +521,35 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityPage {
+    pub activities: Vec<Activity>,
+    pub next_cursor: Option<String>,
+    pub issues: Vec<Issue>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetHistory {
+    pub connection_id: String,
+    pub target_id: String,
+    pub provider: Provider,
+    pub next_cursor: Option<String>,
+    pub checked_at: String,
+    pub generation: u64,
+}
+
+impl Target {
+    pub fn key(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.provider.as_str(),
+            self.connection_id,
+            self.id
+        )
     }
 }

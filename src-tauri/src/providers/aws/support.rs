@@ -1,13 +1,13 @@
 use super::{
-    cluster_name, target_id, SharedProfiles, AWS_PROVIDER, CLOUD_FORMATION_STACK, ECS_SERVICE,
-    MAX_DISCOVERED_TARGETS,
+    cluster_name, target_id, SharedProfiles, AMPLIFY_BRANCH, AWS_PROVIDER, CLOUD_FORMATION_STACK,
+    ECS_SERVICE, MAX_DISCOVERED_TARGETS,
 };
 use crate::models::{
     ActivityStatus, Connection, ConnectionStatus, Discovery, Issue, Ownership, Target,
 };
 use aws_config::{profile::ProfileFileCredentialsProvider, BehaviorVersion};
 use aws_types::{region::Region, SdkConfig};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
@@ -63,6 +63,36 @@ pub(super) fn ecs_target(
     }
 }
 
+pub(super) fn amplify_target(
+    connection_id: &str,
+    profile: &str,
+    region: &str,
+    app_id: &str,
+    app_name: &str,
+    branch: &str,
+) -> Target {
+    Target {
+        id: target_id(
+            AMPLIFY_BRANCH,
+            profile,
+            region,
+            &format!("{app_id}:{branch}"),
+        ),
+        provider: AWS_PROVIDER,
+        connection_id: connection_id.into(),
+        name: format!("Amplify: {app_name}/{branch}"),
+        description: Some(format!("Amplify Hosting branch in {region}")),
+        metadata: HashMap::from([
+            ("kind".into(), AMPLIFY_BRANCH.into()),
+            ("profile".into(), profile.into()),
+            ("region".into(), region.into()),
+            ("app_id".into(), app_id.into()),
+            ("app_name".into(), app_name.into()),
+            ("branch".into(), branch.into()),
+        ]),
+    }
+}
+
 pub(super) fn push_target(targets: &mut Vec<Target>, target: Target, issues: &mut Vec<Issue>) {
     if targets.len() < MAX_DISCOVERED_TARGETS {
         targets.push(target);
@@ -86,6 +116,9 @@ pub(super) struct AwsTargetMetadata<'a> {
     pub(super) stack_id: Option<&'a str>,
     pub(super) cluster: Option<&'a str>,
     pub(super) service: Option<&'a str>,
+    pub(super) app_id: Option<&'a str>,
+    pub(super) app_name: Option<&'a str>,
+    pub(super) branch: Option<&'a str>,
 }
 
 pub(super) fn target_metadata(target: &Target) -> Result<AwsTargetMetadata<'_>, String> {
@@ -95,10 +128,25 @@ pub(super) fn target_metadata(target: &Target) -> Result<AwsTargetMetadata<'_>, 
     if !is_safe_region(region) {
         return Err("AWS target region is invalid.".into());
     }
-    let stack = target.metadata.get("stack").map(String::as_str);
-    let stack_id = target.metadata.get("stack_id").map(String::as_str);
-    let cluster = target.metadata.get("cluster").map(String::as_str);
-    let service = target.metadata.get("service").map(String::as_str);
+    let stack = optional_metadata_value(target, "stack")?;
+    let stack_id = optional_metadata_value(target, "stack_id")?;
+    let cluster = optional_metadata_value(target, "cluster")?;
+    let service = optional_metadata_value(target, "service")?;
+    let app_id = optional_metadata_value(target, "app_id")?;
+    let app_name = optional_metadata_value(target, "app_name")?;
+    let branch = optional_metadata_value(target, "branch")?;
+    match kind {
+        CLOUD_FORMATION_STACK if stack.is_none() => {
+            return Err("CloudFormation target is missing valid stack metadata.".into())
+        }
+        ECS_SERVICE if cluster.is_none() || service.is_none() => {
+            return Err("ECS target is missing valid cluster or service metadata.".into())
+        }
+        AMPLIFY_BRANCH if app_id.is_none() || app_name.is_none() || branch.is_none() => {
+            return Err("Amplify target is missing valid app or branch metadata.".into())
+        }
+        _ => {}
+    }
     Ok(AwsTargetMetadata {
         kind,
         profile,
@@ -107,7 +155,20 @@ pub(super) fn target_metadata(target: &Target) -> Result<AwsTargetMetadata<'_>, 
         stack_id,
         cluster,
         service,
+        app_id,
+        app_name,
+        branch,
     })
+}
+
+fn optional_metadata_value<'a>(target: &'a Target, key: &str) -> Result<Option<&'a str>, String> {
+    match target.metadata.get(key) {
+        None => Ok(None),
+        Some(value) if !value.trim().is_empty() && !value.contains('\0') && value.len() <= 512 => {
+            Ok(Some(value.as_str()))
+        }
+        Some(_) => Err(format!("AWS target has invalid {key} metadata.")),
+    }
 }
 
 pub(super) fn metadata_value<'a>(target: &'a Target, key: &str) -> Result<&'a str, String> {
@@ -324,6 +385,17 @@ pub(super) fn normalize_ecs_status(raw_status: &str) -> ActivityStatus {
     }
 }
 
+pub(super) fn normalize_amplify_status(raw_status: &str) -> ActivityStatus {
+    match raw_status {
+        "CREATED" | "PENDING" => ActivityStatus::Queued,
+        "PROVISIONING" | "RUNNING" | "CANCELLING" => ActivityStatus::Running,
+        "SUCCEED" => ActivityStatus::Success,
+        "FAILED" => ActivityStatus::Failed,
+        "CANCELLED" => ActivityStatus::Canceled,
+        _ => ActivityStatus::Unknown,
+    }
+}
+
 pub(super) fn record_latest_stack_operation(
     seen_operations: &mut HashSet<String>,
     operation_id: &str,
@@ -344,6 +416,11 @@ pub(super) fn terminal_time(status: ActivityStatus, time: &str) -> Option<String
             | ActivityStatus::Skipped
     )
     .then(|| time.to_owned())
+}
+
+pub(super) fn rfc3339(milliseconds: i64) -> Option<String> {
+    DateTime::<Utc>::from_timestamp_millis(milliseconds)
+        .map(|value| value.to_rfc3339_opts(SecondsFormat::Millis, true))
 }
 
 pub(super) fn should_collect_ecs_deployment(

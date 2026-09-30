@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { PROVIDER_NAMES, type Account, type Provider } from "../domain";
+import { getPlatformDetails } from "../platformDetails";
 
 interface Props {
   provider: Provider;
@@ -24,6 +25,8 @@ export function AccountPicker({
   onRemove,
   onLoadProfiles,
 }: Props) {
+  const details = getPlatformDetails(provider);
+  const supportsMultipleAccounts = details.supportsMultipleAccounts;
   const [adding, setAdding] = useState(false);
   const [label, setLabel] = useState("");
   const [profile, setProfile] = useState("");
@@ -39,12 +42,27 @@ export function AccountPicker({
       setProfile("");
     }
   };
+  const addLocalSession = async () => {
+    if (await onCreate(`${PROVIDER_NAMES[provider]} CLI 세션`, null)) {
+      setAdding(false);
+    }
+  };
+
+  if (details.unsupportedMessage) {
+    return (
+      <div className="account-picker unsupported-connection" role="status">
+        <strong>현재 연결할 수 없습니다</strong>
+        <p>{details.unsupportedMessage}</p>
+      </div>
+    );
+  }
+
   return (
     <div className="account-picker">
       {accounts.length > 0 && (
         <div className="account-picker-row">
           <label>
-            계정 연결
+            연결할 계정
             <select
               aria-label="연결할 계정"
               value={selectedId}
@@ -64,14 +82,16 @@ export function AccountPicker({
               ))}
             </select>
           </label>
-          <button
-            className="icon-button"
-            aria-label="계정 추가"
-            disabled={busy}
-            onClick={() => setAdding(!adding)}
-          >
-            <Plus size={16} />
-          </button>
+          {supportsMultipleAccounts && (
+            <button
+              className="icon-button"
+              aria-label="계정 추가"
+              disabled={busy}
+              onClick={() => setAdding(!adding)}
+            >
+              <Plus size={16} />
+            </button>
+          )}
           {selectedId !== "github:local" && selectedId !== "vercel:local" && (
             <button
               className="icon-button"
@@ -84,8 +104,24 @@ export function AccountPicker({
           )}
         </div>
       )}
-      {(adding || accounts.length === 0) && (
+      {!supportsMultipleAccounts && accounts.length === 0 && (
+        <div className="account-create local-session-create">
+          <strong>이 기기의 CLI 세션</strong>
+          <p>{details.connectionSummary}</p>
+          <button
+            className="button"
+            disabled={busy}
+            onClick={() => void addLocalSession()}
+          >
+            CLI 세션 연결
+          </button>
+        </div>
+      )}
+      {supportsMultipleAccounts && (adding || accounts.length === 0) && (
         <div className="account-create">
+          <strong>
+            {provider === "aws" ? "AWS 프로필 연결" : "별도 계정 연결"}
+          </strong>
           <label>
             계정 이름
             <input

@@ -1,5 +1,27 @@
-import { Cloud, GitBranch, Triangle } from "lucide-react";
 import type { Provider } from "../domain";
+
+const LOGOS: Record<Provider, string> = {
+  github: "github",
+  "github-deployments": "github",
+  vercel: "vercel",
+  aws: "aws",
+  railway: "railway",
+  netlify: "netlify",
+  render: "render",
+  "cloudflare-pages": "cloudflare",
+  "cloudflare-workers": "cloudflare",
+  heroku: "heroku",
+  fly: "flydotio",
+  gitlab: "gitlab",
+  digitalocean: "digitalocean",
+  gcloud: "googlecloud",
+  azure: "azure",
+  eas: "expo",
+  firebase: "firebase",
+  supabase: "supabase",
+  fastlane: "fastlane",
+};
+
 export function ProviderIcon({
   provider,
   size = 17,
@@ -7,17 +29,19 @@ export function ProviderIcon({
   provider: Provider;
   size?: number;
 }) {
-  const Icon =
-    provider === "github"
-      ? GitBranch
-      : provider === "vercel"
-        ? Triangle
-        : Cloud;
   return (
-    <Icon
-      size={size}
+    <img
+      src={`/providers/${LOGOS[provider]}.svg`}
+      width={size}
+      height={size}
+      alt=""
       aria-hidden="true"
-      fill={provider === "vercel" ? "currentColor" : "none"}
+      draggable={false}
+      style={{
+        objectFit: "contain",
+        flexShrink: 0,
+        filter: "brightness(0) invert(1)",
+      }}
     />
   );
 }

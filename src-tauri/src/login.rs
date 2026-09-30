@@ -120,7 +120,7 @@ async fn run_login(
     };
     let profile_arg = profile.unwrap_or_default();
     let args: Vec<&str> = match provider {
-        Provider::Github => vec![
+        Provider::Github | Provider::GithubDeployments => vec![
             "auth",
             "login",
             "--web",
@@ -139,6 +139,7 @@ async fn run_login(
             "--no-browser",
             "--use-device-code",
         ],
+        _ => return login_error(provider, &connection_id, "Sign in with this provider's official CLI, then use Connect and discover. No credentials are stored by crowline."),
     };
     let mut child = match invocation.login_command(&args).spawn() {
         Ok(child) => child,
@@ -289,7 +290,24 @@ fn allowed_login_url(value: &str, provider: Provider) -> bool {
     matches!(
         (provider, url.host_str()),
         (Provider::Github, Some("github.com")) | (Provider::Vercel, Some("vercel.com"))
-    ) || provider == Provider::Aws
+    ) || match provider {
+        Provider::GithubDeployments => url.host_str() == Some("github.com"),
+        Provider::Railway => matches!(url.host_str(), Some("railway.com" | "railway.app")),
+        Provider::Netlify => url.host_str() == Some("app.netlify.com"),
+        Provider::Render => url.host_str() == Some("dashboard.render.com"),
+        Provider::CloudflarePages | Provider::CloudflareWorkers => {
+            url.host_str() == Some("dash.cloudflare.com")
+        }
+        Provider::Heroku => url.host_str() == Some("cli-auth.heroku.com"),
+        Provider::Fly => url.host_str() == Some("fly.io"),
+        Provider::Gitlab => url.host_str() == Some("gitlab.com"),
+        Provider::Azure => matches!(
+            url.host_str(),
+            Some("microsoft.com" | "login.microsoftonline.com")
+        ),
+        Provider::Gcloud => url.host_str() == Some("accounts.google.com"),
+        _ => false,
+    } || provider == Provider::Aws
         && url
             .host_str()
             .is_some_and(|host| host.ends_with(".amazonaws.com") || host.ends_with(".awsapps.com"))
@@ -331,6 +349,7 @@ fn provider_name(provider: Provider) -> &'static str {
         Provider::Github => "GitHub",
         Provider::Vercel => "Vercel",
         Provider::Aws => "AWS",
+        other => other.as_str(),
     }
 }
 

@@ -1,0 +1,46 @@
+.panel-preferences {
+  max-width: 760px;
+}
+.preferences-note,
+.panel-preferences fieldset p {
+  color: #969ba6;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.panel-preferences fieldset {
+  margin: var(--space-6) 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-surface);
+  min-width: 0;
+}
+.panel-preferences legend {
+  padding: 0 var(--space-2);
+  font-weight: 600;
+}
+.preference-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.preference-option input {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  accent-color: #a0b5ff;
+}
+.preference-option small {
+  display: block;
+  color: #969ba6;
+  margin-top: 4px;
+}
+.preferences-save {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: 12px;
+}

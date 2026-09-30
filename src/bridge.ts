@@ -11,6 +11,7 @@ import {
   type Provider,
   type Settings,
   type Snapshot,
+  type TargetHistory,
 } from "./domain";
 import { DEMO_TARGETS, demoSnapshot } from "./demo";
 
@@ -31,6 +32,16 @@ export const bridge = {
       return call("save_settings", settingsSchema, { settings: validated });
     preview = { ...preview, settings: validated };
     return validated;
+  },
+  loadMore: async (page: TargetHistory) => {
+    if (!page.nextCursor) throw new Error("다음 페이지가 없습니다.");
+    if (isPreview) return preview;
+    return call("load_more", snapshotSchema, {
+      connectionId: page.connectionId,
+      targetId: page.targetId,
+      cursor: page.nextCursor,
+      generation: page.generation,
+    });
   },
   discover: async (
     provider: Provider,
@@ -93,17 +104,25 @@ export const bridge = {
         profile,
       });
     const account = accountSchema.parse({
-      id: `${provider}:demo-${Date.now()}`,
+      id: ["github", "vercel", "aws"].includes(provider)
+        ? `${provider}:demo-${Date.now()}`
+        : `${provider}:local`,
       provider,
       label,
       profile,
-      mode: provider === "aws" ? "local" : "isolated",
+      mode: ["github", "vercel"].includes(provider) ? "isolated" : "local",
     });
     preview = {
       ...preview,
       settings: {
         ...preview.settings,
         accounts: [...preview.settings.accounts, account],
+        panel: {
+          ...preview.settings.panel,
+          providers: Array.from(
+            new Set([...preview.settings.panel.providers, provider]),
+          ),
+        },
       },
     };
     return account;

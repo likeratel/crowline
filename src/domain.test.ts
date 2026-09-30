@@ -3,6 +3,9 @@ import { demoSnapshot } from "./demo";
 import {
   duration,
   isActive,
+  panelActivities,
+  panelSettingsSchema,
+  targetKey,
   settingsSchema,
   snapshotSchema,
   visibleActivities,
@@ -110,7 +113,7 @@ describe("activity filtering", () => {
       [],
     );
   });
-  it("retains active runs older than the history window", () => {
+  it("hides active runs older than 24 hours", () => {
     const snapshot = demoSnapshot();
     const old = {
       ...snapshot.activities[0],
@@ -119,7 +122,7 @@ describe("activity filtering", () => {
     };
     expect(
       visibleActivities({ ...snapshot, activities: [old] }, "all", ""),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   });
   it("uses completion time rather than creation time for recent runs", () => {
     const snapshot = demoSnapshot();
@@ -196,5 +199,81 @@ describe("IPC validation", () => {
       snapshotSchema.safeParse({ ...snapshot, lastUpdatedAt: "not a date" })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("status panel policy", () => {
+  it("excludes blocked even from old cached waiting states without hiding other approvals", () => {
+    const base = demoSnapshot();
+    const blocked: Activity = {
+      ...base.activities[1],
+      status: "waiting",
+      rawStatus: "BLOCKED",
+    };
+    const approval: Activity = {
+      ...base.activities[0],
+      status: "waiting",
+      rawStatus: "waiting",
+    };
+    expect(
+      visibleActivities(
+        { ...base, activities: [blocked, approval] },
+        "all",
+        "",
+      ),
+    ).toEqual([approval]);
+    expect(isActive(blocked)).toBe(false);
+  });
+  it("uses the start time and exact 24-hour boundary regardless of the history setting", () => {
+    const base = demoSnapshot();
+    const now = Date.parse("2026-09-29T12:00:00Z");
+    for (const status of ["queued", "running", "waiting"] as const) {
+      for (const historyHours of [24, 168] as const) {
+        const item = {
+          ...base.activities[0],
+          status,
+          startedAt: "2026-09-28T12:00:00Z",
+          updatedAt: new Date(now).toISOString(),
+        };
+        const snapshot = {
+          ...base,
+          settings: { ...base.settings, historyHours },
+          activities: [item],
+        };
+        expect(visibleActivities(snapshot, "all", "", now)).toEqual([item]);
+        expect(visibleActivities(snapshot, "all", "", now + 1)).toEqual([]);
+      }
+    }
+  });
+  it("filters panel services and account-specific projects without changing the dashboard", () => {
+    const base = demoSnapshot();
+    const settings = {
+      ...base.settings,
+      panel: {
+        ...base.settings.panel,
+        providers: ["github"] as const,
+        hiddenTargets: [targetKey(base.settings.targets[0])],
+      },
+    };
+    const snapshot = {
+      ...base,
+      settings: {
+        ...settings,
+        panel: { ...settings.panel, providers: [...settings.panel.providers] },
+      },
+    };
+    expect(panelActivities(snapshot)).toEqual([]);
+    expect(visibleActivities(snapshot, "all", "")).toEqual(
+      visibleActivities(base, "all", ""),
+    );
+  });
+  it("defaults old settings and rejects invalid limits", () => {
+    const { panel: _panel, ...legacy } = demoSnapshot().settings;
+    expect(settingsSchema.parse(legacy).panel).toEqual(
+      panelSettingsSchema.parse({}),
+    );
+    for (const rowLimit of [0, 11, 1.5]) {
+      expect(panelSettingsSchema.safeParse({ rowLimit }).success).toBe(false);
+    }
   });
 });

@@ -1,3 +1,4 @@
+import { panelSettingsSchema } from "./domain";
 import type { Account, Activity, Provider, Snapshot, Target } from "./domain";
 
 export const DEMO_ACCOUNTS: Account[] = [
@@ -61,6 +62,7 @@ function activity(
   return {
     id,
     provider,
+    targetId: DEMO_TARGETS.find((target) => target.provider === provider)?.id,
     connectionId: provider === "aws" ? "aws:development" : `${provider}:local`,
     title,
     status,
@@ -93,6 +95,7 @@ export function demoSnapshot(): Snapshot {
     settings: {
       scope: "mine",
       historyHours: 24,
+      panel: panelSettingsSchema.parse({}),
       targets: DEMO_TARGETS,
       accounts: DEMO_ACCOUNTS,
     },
@@ -141,6 +144,8 @@ export function demoSnapshot(): Snapshot {
     ],
     issues: [],
     refreshing: false,
+    history: [],
+    pendingTargets: [],
     lastUpdatedAt: ago(0),
   };
 }

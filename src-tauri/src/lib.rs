@@ -2,6 +2,7 @@ mod cli;
 mod commands;
 mod login;
 pub mod models;
+mod panel;
 pub mod providers;
 mod settings;
 mod state;
@@ -47,15 +48,18 @@ pub fn run() {
             match event {
                 WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
-                    let _ = window.hide();
+                    let _ = windows::hide_panel(window.app_handle());
                 }
                 WindowEvent::Focused(focused) => {
+                    // Tao queues focus events on macOS, so the current state can be
+                    // newer than this event when a hidden panel is shown again.
+                    let currently_focused = *focused || window.is_focused().unwrap_or(true);
                     let should_hide = window
                         .app_handle()
                         .state::<windows::PanelFocusState>()
-                        .focus_changed(*focused);
+                        .should_hide_for_focus_change(*focused, currently_focused);
                     if should_hide {
-                        let _ = window.hide();
+                        let _ = windows::hide_panel(window.app_handle());
                     }
                 }
                 _ => {}
@@ -63,6 +67,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,
+            commands::load_more,
             commands::save_settings,
             commands::refresh,
             commands::discover,

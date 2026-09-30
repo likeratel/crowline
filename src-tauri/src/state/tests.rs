@@ -16,6 +16,8 @@ fn test_state(directory: &Path) -> AppState {
         refresh_lock: Mutex::new(()),
         publish_lock: Mutex::new(()),
         settings_revision: AtomicU64::new(0),
+        refresh_epoch: AtomicU64::new(0),
+        history_lock: Mutex::new(()),
         login_statuses: Mutex::new(HashMap::new()),
     }
 }
@@ -279,4 +281,75 @@ async fn simultaneous_account_mutations_do_not_lose_updates() {
         snapshot.settings
     );
     let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn tray_and_polling_exclude_expired_and_blocked_runs() {
+    let mut snapshot = Snapshot::initial(Settings {
+        targets: vec![target("github:local", "a")],
+        ..Settings::default()
+    });
+    snapshot.connections = vec![connection(
+        "github:local",
+        Some("person"),
+        ConnectionStatus::Connected,
+    )];
+    snapshot.activities = vec![Activity {
+        status: ActivityStatus::Running,
+        ..activity("github:local", "a")
+    }];
+    assert_eq!(active_tray_count(&snapshot), 1);
+    snapshot.settings.panel.providers = vec![Provider::Vercel];
+    assert_eq!(active_tray_count(&snapshot), 0);
+    snapshot.settings.panel.providers = vec![Provider::Github];
+    snapshot.settings.panel.hidden_targets = vec!["github:github:local:org/a".into()];
+    assert_eq!(active_tray_count(&snapshot), 0);
+    snapshot.settings.panel.hidden_targets.clear();
+    snapshot.settings.panel.show_active = false;
+    assert_eq!(active_tray_count(&snapshot), 0);
+    snapshot.settings.panel.show_active = true;
+    snapshot.activities[0].started_at = (Utc::now() - chrono::Duration::hours(25)).to_rfc3339();
+    assert_eq!(active_tray_count(&snapshot), 0);
+    assert_eq!(poll_interval(&snapshot), IDLE_POLL_INTERVAL);
+    snapshot.activities[0].started_at = Utc::now().to_rfc3339();
+    snapshot.activities[0].provider = Provider::Vercel;
+    snapshot.activities[0].status = ActivityStatus::Waiting;
+    snapshot.activities[0].raw_status = "BLOCKED".into();
+    snapshot.settings.targets[0].provider = Provider::Vercel;
+    snapshot.settings.panel.providers = vec![Provider::Vercel];
+    assert_eq!(active_tray_count(&snapshot), 0);
+    assert_eq!(poll_interval(&snapshot), IDLE_POLL_INTERVAL);
+}
+
+#[test]
+fn cached_blocked_wins_a_timestamp_tie_over_running() {
+    let running = Activity {
+        provider: Provider::Vercel,
+        status: ActivityStatus::Running,
+        ..activity("vercel:local", "a")
+    };
+    let blocked = Activity {
+        status: ActivityStatus::Waiting,
+        raw_status: "BLOCKED".into(),
+        ..running.clone()
+    };
+    let selected = Target {
+        provider: Provider::Vercel,
+        ..target("vercel:local", "a")
+    };
+    let snapshot = Snapshot {
+        activities: vec![running.clone(), blocked.clone()],
+        ..Snapshot::initial(Settings {
+            targets: vec![selected],
+            ..Settings::default()
+        })
+    };
+    assert_eq!(active_tray_count(&snapshot), 0);
+    assert_eq!(
+        active_tray_count(&Snapshot {
+            activities: vec![blocked, running],
+            ..snapshot
+        }),
+        0
+    );
 }

@@ -22,7 +22,7 @@ const ISOLATED_GITHUB_VERSION_MARKER: &str = "2.65.0-crowline.1";
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const PROCESS_GATE_TIMEOUT: Duration = Duration::from_secs(3);
+const PROCESS_GATE_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_OUTPUT_BYTES: u64 = 8 * 1024 * 1024 + 1;
 
 #[derive(Clone, Debug)]
@@ -32,6 +32,7 @@ pub struct CliInvocation {
     process_gate: std::sync::Arc<Semaphore>,
     environment: Vec<(OsString, OsString)>,
     removed_environment: Vec<OsString>,
+    version_cache: std::sync::Arc<tokio::sync::OnceCell<Option<String>>>,
 }
 
 impl CliInvocation {
@@ -42,6 +43,7 @@ impl CliInvocation {
             process_gate,
             environment: Vec::new(),
             removed_environment: Vec::new(),
+            version_cache: std::sync::Arc::new(tokio::sync::OnceCell::new()),
         }
     }
 
@@ -56,15 +58,26 @@ impl CliInvocation {
             process_gate,
             environment: Vec::new(),
             removed_environment: Vec::new(),
+            version_cache: std::sync::Arc::new(tokio::sync::OnceCell::new()),
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn for_test(program: PathBuf) -> Self {
+        Self::direct(program, std::sync::Arc::new(Semaphore::new(4)))
+    }
+
     pub async fn version(&self) -> Option<String> {
-        self.run(&["--version"], Duration::from_secs(5))
+        self.version_cache
+            .get_or_init(|| async {
+                self.run(&["--version"], Duration::from_secs(5))
+                    .await
+                    .ok()
+                    .and_then(|output| output.lines().next().map(str::trim).map(str::to_owned))
+                    .filter(|version| !version.is_empty())
+            })
             .await
-            .ok()
-            .and_then(|output| output.lines().next().map(str::trim).map(str::to_owned))
-            .filter(|version| !version.is_empty())
+            .clone()
     }
 
     pub async fn json<T: DeserializeOwned>(&self, args: &[&str]) -> Result<T, CliError> {
@@ -218,6 +231,7 @@ pub struct Toolchain {
     github_isolated: Option<CliInvocation>,
     pub vercel: Option<CliInvocation>,
     pub aws: Option<CliInvocation>,
+    local: HashMap<Provider, CliInvocation>,
     account_config_root: PathBuf,
     account_gates: std::sync::Mutex<HashMap<String, std::sync::Arc<Semaphore>>>,
 }
@@ -255,6 +269,17 @@ impl Toolchain {
             github_isolated,
             vercel,
             aws,
+            local: crate::providers::catalog::local_tools()
+                .iter()
+                .filter_map(|(provider, names)| {
+                    find_executable(names).map(|path| {
+                        (
+                            *provider,
+                            CliInvocation::direct(path, std::sync::Arc::new(Semaphore::new(4))),
+                        )
+                    })
+                })
+                .collect(),
             account_config_root: app_data_dir.join("accounts"),
             account_gates: std::sync::Mutex::new(HashMap::new()),
         }
@@ -267,8 +292,17 @@ impl Toolchain {
             github_isolated: None,
             vercel: None,
             aws: None,
+            local: HashMap::new(),
             account_config_root: app_data_dir.join("accounts"),
             account_gates: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn github_for_test(app_data_dir: &Path, cli: CliInvocation) -> Self {
+        Self {
+            github: Some(cli),
+            ..Self::unavailable_for_test(app_data_dir)
         }
     }
 
@@ -284,6 +318,8 @@ impl Toolchain {
             (Provider::Github, AccountMode::Local) => self.github.as_ref(),
             (Provider::Vercel, _) => self.vercel.as_ref(),
             (Provider::Aws, _) => self.aws.as_ref(),
+            (Provider::GithubDeployments, _) => self.github.as_ref(),
+            (provider, _) => self.local.get(&provider),
         };
         let Some(base) = base else {
             return Ok(None);
@@ -295,7 +331,7 @@ impl Toolchain {
                 .map_err(|_| "CLI account coordination is unavailable.".to_owned())?;
             gates
                 .entry(account.id.clone())
-                .or_insert_with(|| std::sync::Arc::new(Semaphore::new(1)))
+                .or_insert_with(|| std::sync::Arc::new(Semaphore::new(4)))
                 .clone()
         };
         let mut invocation = base.clone();
@@ -319,7 +355,7 @@ impl Toolchain {
                     "--global-config".into(),
                     directory.to_string_lossy().into_owned(),
                 ]),
-                Provider::Aws => return Err("AWS accounts cannot use isolated CLI mode.".into()),
+                _ => return Err("This provider cannot use isolated CLI mode.".into()),
             }
         }
         Ok(Some(invocation))
@@ -336,7 +372,7 @@ impl Toolchain {
 
 fn provider_environment(provider: Provider) -> &'static [&'static str] {
     match provider {
-        Provider::Github => &[
+        Provider::Github | Provider::GithubDeployments => &[
             "GH_TOKEN",
             "GITHUB_TOKEN",
             "GH_ENTERPRISE_TOKEN",
@@ -351,7 +387,10 @@ fn provider_environment(provider: Provider) -> &'static [&'static str] {
             "VERCEL_PROJECT_ID",
             "VERCEL_SCOPE",
         ],
-        Provider::Aws => &[],
+        Provider::Eas => &["EXPO_TOKEN"],
+        Provider::Firebase => &["FIREBASE_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS"],
+        Provider::Supabase => &["SUPABASE_ACCESS_TOKEN"],
+        _ => &[],
     }
 }
 
@@ -516,6 +555,31 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn version_is_cached_across_concurrent_invocation_clones() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("crowline-version-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let script = root.join("fake-cli");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nprintf '1' >> \"$0.calls\"\nprintf 'fixture 1.0.0\\n'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let cli = CliInvocation::for_test(script.clone());
+        let clone = cli.clone();
+        let (first, second) = tokio::join!(cli.version(), clone.version());
+        assert_eq!(first, second);
+        assert_eq!(first.as_deref(), Some("fixture 1.0.0"));
+        assert_eq!(
+            std::fs::read_to_string(script.with_extension("calls")).unwrap(),
+            "1"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn account_invocations_isolate_credentials_and_require_patched_github() {
         let root = std::env::temp_dir().join(format!("crowline-cli-test-{}", std::process::id()));
@@ -533,6 +597,7 @@ mod tests {
                 std::sync::Arc::new(Semaphore::new(1)),
             )),
             aws: None,
+            local: HashMap::new(),
             account_config_root: root.clone(),
             account_gates: std::sync::Mutex::new(HashMap::new()),
         };

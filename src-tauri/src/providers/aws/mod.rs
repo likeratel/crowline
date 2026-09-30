@@ -1,35 +1,35 @@
-use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet},
     time::Duration,
 };
 
-use crate::models::{Activity, Connection, ConnectionStatus, Discovery, Issue, Provider, Target};
+use crate::models::{Connection, ConnectionStatus, Discovery, Issue, Provider, Target};
 
+mod amplify;
+mod collection;
 mod support;
 
 #[cfg(test)]
 mod tests;
 
 use support::{
-    cloudformation_operation_id, cloudformation_target, connection_status_for_error,
-    disconnected_discovery, ecs_target, friendly_aws_error, is_selected_stack_event, load_config,
-    normalize_cloudformation_status, normalize_ecs_status, ownership_from_observed_actor,
-    partial_issue, push_target, read_shared_profiles, record_latest_stack_operation,
-    selected_profile, selected_region, should_collect_cloudformation_operation,
-    should_collect_ecs_deployment, target_issue, target_metadata, terminal_time, AwsTargetMetadata,
+    cloudformation_target, connection_status_for_error, disconnected_discovery, ecs_target,
+    friendly_aws_error, load_config, partial_issue, push_target, read_shared_profiles,
+    selected_profile, selected_region,
 };
+
+pub use collection::{collect, page};
 
 const AWS_PROVIDER: Provider = Provider::Aws;
 const CALL_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_DISCOVERY_PAGES: usize = 10;
-const MAX_EVENT_PAGES: usize = 5;
 const MAX_DISCOVERED_TARGETS: usize = 500;
 const MAX_COLLECT_TARGETS: usize = 100;
 const ECS_DESCRIBE_BATCH_SIZE: usize = 10;
 
 const CLOUD_FORMATION_STACK: &str = "cloudformation_stack";
 const ECS_SERVICE: &str = "ecs_service";
+const AMPLIFY_BRANCH: &str = "amplify_branch";
 
 #[derive(Default)]
 struct SharedProfiles {
@@ -95,7 +95,9 @@ pub async fn connection(
             )
         }
     };
-    checked_connection(&load_config(&profile, &region).await, connection_id).await
+    let config = load_config(&profile, &region).await;
+    collection::seed_clients(&profile, &region, &config);
+    checked_connection(&config, connection_id).await
 }
 
 async fn checked_connection(config: &aws_types::SdkConfig, connection_id: &str) -> Connection {
@@ -128,7 +130,7 @@ async fn checked_connection(config: &aws_types::SdkConfig, connection_id: &str) 
     }
 }
 
-/// Discovers read-only CloudFormation and ECS targets for one explicit shared AWS profile.
+/// Discovers read-only CloudFormation, ECS, and Amplify targets for one explicit profile.
 pub async fn discover(
     profile: Option<String>,
     region: Option<String>,
@@ -167,6 +169,7 @@ pub async fn discover(
     };
 
     let config = load_config(&selected_profile, &selected_region).await;
+    collection::seed_clients(&selected_profile, &selected_region, &config);
     let connection = checked_connection(&config, connection_id).await;
     if connection.status != ConnectionStatus::Connected {
         let message = connection
@@ -208,7 +211,28 @@ pub async fn discover(
     } else {
         issues.push(partial_issue(
             connection_id,
-            "AWS discovery reached its target limit; ECS services were not listed.",
+            "AWS discovery reached its target limit; ECS and Amplify resources were not listed.",
+        ));
+    }
+
+    if targets.len() < MAX_DISCOVERED_TARGETS {
+        let amplify = aws_sdk_amplify::Client::new(&config);
+        amplify::discover_apps(
+            &amplify,
+            connection_id,
+            &selected_profile,
+            &selected_region,
+            &mut targets,
+            &mut issues,
+        )
+        .await;
+    } else if !issues
+        .iter()
+        .any(|issue| issue.message.contains("Amplify resources were not listed"))
+    {
+        issues.push(partial_issue(
+            connection_id,
+            "AWS discovery reached its target limit; Amplify resources were not listed.",
         ));
     }
 
@@ -218,88 +242,6 @@ pub async fn discover(
         aws_profiles,
         issues,
     })
-}
-
-/// Collects recent stack operations and ECS service deployments without changing AWS resources.
-pub async fn collect(targets: &[Target], history_hours: u32) -> (Vec<Activity>, Vec<Issue>) {
-    let connection_id = targets
-        .first()
-        .map(|target| target.connection_id.as_str())
-        .unwrap_or("");
-    if !(1..=168).contains(&history_hours) {
-        return (
-            Vec::new(),
-            vec![Issue {
-                provider: AWS_PROVIDER,
-                connection_id: (!connection_id.is_empty()).then(|| connection_id.into()),
-                message: "AWS activity history must be between 1 and 168 hours.".into(),
-                target_id: None,
-            }],
-        );
-    }
-
-    let aws_targets = targets
-        .iter()
-        .filter(|target| target.provider == AWS_PROVIDER)
-        .take(MAX_COLLECT_TARGETS)
-        .collect::<Vec<_>>();
-    let mut activities = Vec::new();
-    let mut issues = Vec::new();
-    let cutoff = Utc::now() - ChronoDuration::hours(i64::from(history_hours));
-
-    if targets
-        .iter()
-        .filter(|target| target.provider == AWS_PROVIDER)
-        .count()
-        > MAX_COLLECT_TARGETS
-    {
-        issues.push(partial_issue(
-            connection_id,
-            "AWS activity collection reached its target limit; some selected targets were skipped.",
-        ));
-    }
-
-    for target in aws_targets {
-        let metadata = match target_metadata(target) {
-            Ok(metadata) => metadata,
-            Err(message) => {
-                issues.push(target_issue(target, message));
-                continue;
-            }
-        };
-
-        let config = load_config(metadata.profile, metadata.region).await;
-        match metadata.kind {
-            CLOUD_FORMATION_STACK => {
-                let client = aws_sdk_cloudformation::Client::new(&config);
-                collect_stack_events(
-                    &client,
-                    target,
-                    &metadata,
-                    cutoff,
-                    &mut activities,
-                    &mut issues,
-                )
-                .await;
-            }
-            ECS_SERVICE => {
-                let client = aws_sdk_ecs::Client::new(&config);
-                collect_ecs_deployments(
-                    &client,
-                    target,
-                    &metadata,
-                    cutoff,
-                    &mut activities,
-                    &mut issues,
-                )
-                .await;
-            }
-            _ => issues.push(target_issue(target, "AWS target type is not supported.")),
-        }
-    }
-
-    activities.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-    (activities, issues)
 }
 
 async fn discover_stacks(
@@ -532,231 +474,6 @@ async fn discover_cluster_services(
             ));
         }
     }
-}
-
-async fn collect_stack_events(
-    client: &aws_sdk_cloudformation::Client,
-    target: &Target,
-    metadata: &AwsTargetMetadata<'_>,
-    cutoff: DateTime<Utc>,
-    activities: &mut Vec<Activity>,
-    issues: &mut Vec<Issue>,
-) {
-    let Some(stack) = metadata.stack else {
-        issues.push(target_issue(
-            target,
-            "CloudFormation target is missing its stack name.",
-        ));
-        return;
-    };
-    let mut next_token = None;
-    let mut seen_operations = HashSet::new();
-
-    for page in 0..MAX_EVENT_PAGES {
-        let mut request = client.describe_stack_events().stack_name(stack);
-        if let Some(token) = next_token.take() {
-            request = request.next_token(token);
-        }
-        let output = match tokio::time::timeout(CALL_TIMEOUT, request.send()).await {
-            Ok(Ok(output)) => output,
-            Ok(Err(error)) => {
-                issues.push(target_issue(
-                    target,
-                    friendly_aws_error("CloudFormation event lookup", &error.to_string()),
-                ));
-                return;
-            }
-            Err(_) => {
-                issues.push(target_issue(
-                    target,
-                    "CloudFormation event lookup timed out.",
-                ));
-                return;
-            }
-        };
-
-        for event in output.stack_events() {
-            if event.resource_type() != Some("AWS::CloudFormation::Stack")
-                || !is_selected_stack_event(
-                    stack,
-                    metadata.stack_id,
-                    event.stack_name(),
-                    event.logical_resource_id(),
-                    event.physical_resource_id(),
-                )
-            {
-                continue;
-            }
-            let Some(timestamp) = event
-                .timestamp()
-                .cloned()
-                .and_then(|time| time.to_millis().ok())
-                .and_then(rfc3339)
-            else {
-                continue;
-            };
-            let raw_status = event
-                .resource_status()
-                .map(|status| status.as_str().to_owned())
-                .unwrap_or_else(|| "UNKNOWN".into());
-            let status = normalize_cloudformation_status(&raw_status);
-            let operation_id = cloudformation_operation_id(
-                stack,
-                event.operation_id(),
-                event.client_request_token(),
-            );
-            if !record_latest_stack_operation(&mut seen_operations, &operation_id)
-                || !should_collect_cloudformation_operation(status, &timestamp, cutoff)
-            {
-                continue;
-            }
-            let id = activity_id(&[target.id.as_str(), "cloudformation", &operation_id]);
-            activities.push(Activity {
-                id,
-                target_id: target.id.clone(),
-                provider: AWS_PROVIDER,
-                connection_id: target.connection_id.clone(),
-                kind: "cloudformation".into(),
-                title: format!("CloudFormation stack {stack}"),
-                project: target.name.clone(),
-                branch: None,
-                url: cloudformation_console_url(metadata.region, stack),
-                status,
-                raw_status,
-                actor: None,
-                ownership: ownership_from_observed_actor(None),
-                started_at: timestamp.clone(),
-                finished_at: terminal_time(status, &timestamp),
-                updated_at: timestamp,
-            });
-        }
-
-        next_token = output.next_token().map(str::to_owned);
-        if next_token.is_none() {
-            return;
-        }
-        if page + 1 == MAX_EVENT_PAGES {
-            issues.push(target_issue(
-                target,
-                "CloudFormation event lookup reached its page limit; older activity may be unavailable.",
-            ));
-        }
-    }
-}
-
-async fn collect_ecs_deployments(
-    client: &aws_sdk_ecs::Client,
-    target: &Target,
-    metadata: &AwsTargetMetadata<'_>,
-    cutoff: DateTime<Utc>,
-    activities: &mut Vec<Activity>,
-    issues: &mut Vec<Issue>,
-) {
-    let (Some(cluster), Some(service)) = (metadata.cluster, metadata.service) else {
-        issues.push(target_issue(
-            target,
-            "ECS target is missing its cluster or service identifier.",
-        ));
-        return;
-    };
-    let output = match tokio::time::timeout(
-        CALL_TIMEOUT,
-        client
-            .describe_services()
-            .cluster(cluster)
-            .services(service)
-            .send(),
-    )
-    .await
-    {
-        Ok(Ok(output)) => output,
-        Ok(Err(error)) => {
-            issues.push(target_issue(
-                target,
-                friendly_aws_error("ECS deployment lookup", &error.to_string()),
-            ));
-            return;
-        }
-        Err(_) => {
-            issues.push(target_issue(target, "ECS deployment lookup timed out."));
-            return;
-        }
-    };
-
-    if !output.failures().is_empty() {
-        issues.push(target_issue(
-            target,
-            "ECS did not describe every requested service.",
-        ));
-    }
-    for service_detail in output.services() {
-        for deployment in service_detail.deployments() {
-            let Some(created_at) = deployment
-                .created_at()
-                .cloned()
-                .and_then(|time| time.to_millis().ok())
-                .and_then(rfc3339)
-            else {
-                continue;
-            };
-            let raw_status = deployment
-                .rollout_state()
-                .map(|state| state.as_str().to_owned())
-                .unwrap_or_else(|| "UNKNOWN".into());
-            let status = normalize_ecs_status(&raw_status);
-            let updated_at = deployment
-                .updated_at()
-                .cloned()
-                .and_then(|time| time.to_millis().ok())
-                .and_then(rfc3339)
-                .unwrap_or_else(|| created_at.clone());
-            if !should_collect_ecs_deployment(status, &updated_at, cutoff) {
-                continue;
-            }
-            let deployment_id = deployment
-                .id()
-                .map(str::to_owned)
-                .unwrap_or_else(|| activity_id(&[cluster, service, &created_at, &raw_status]));
-            activities.push(Activity {
-                id: deployment_id,
-                target_id: target.id.clone(),
-                provider: AWS_PROVIDER,
-                connection_id: target.connection_id.clone(),
-                kind: "ecs".into(),
-                title: format!("ECS service {}", service_name(service)),
-                project: target.name.clone(),
-                branch: None,
-                url: ecs_console_url(metadata.region, cluster, service),
-                status,
-                raw_status,
-                actor: None,
-                ownership: ownership_from_observed_actor(None),
-                started_at: created_at.clone(),
-                finished_at: terminal_time(status, &updated_at),
-                updated_at,
-            });
-        }
-    }
-}
-
-fn rfc3339(milliseconds: i64) -> Option<String> {
-    DateTime::<Utc>::from_timestamp_millis(milliseconds)
-        .map(|value| value.to_rfc3339_opts(SecondsFormat::Millis, true))
-}
-
-fn cloudformation_console_url(region: &str, stack: &str) -> String {
-    format!(
-        "https://{region}.console.aws.amazon.com/cloudformation/home?region={region}#/stacks/events?stackId={}",
-        url::form_urlencoded::byte_serialize(stack.as_bytes()).collect::<String>()
-    )
-}
-
-fn ecs_console_url(region: &str, cluster: &str, service: &str) -> String {
-    let cluster =
-        url::form_urlencoded::byte_serialize(cluster_name(cluster).as_bytes()).collect::<String>();
-    let service =
-        url::form_urlencoded::byte_serialize(service_name(service).as_bytes()).collect::<String>();
-    format!("https://{region}.console.aws.amazon.com/ecs/v2/clusters/{cluster}/services/{service}/deployments?region={region}")
 }
 
 fn cluster_name(cluster: &str) -> &str {

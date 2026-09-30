@@ -8,7 +8,6 @@ import {
   Minus,
   Pause,
   RefreshCw,
-  Settings2,
   X,
 } from "lucide-react";
 import { bridge, errorMessage, isPreview } from "../bridge";
@@ -18,20 +17,13 @@ import {
   PROVIDER_NAMES,
   STATUS_LABELS,
   timeAgo,
-  visibleActivities,
+  panelActivities,
+  latestCompleted,
   type Activity,
-  type Provider,
 } from "../domain";
+import { ProviderIcon } from "./ProviderIcon";
 import { useMonitor } from "../useMonitor";
-import { Connections } from "./Connections";
-import { AccountFilter } from "./AccountFilter";
 import "../styles/panel.css";
-
-const SOURCE: Record<Provider, string> = {
-  github: "GH",
-  vercel: "VC",
-  aws: "AWS",
-};
 
 function RunRow({
   item,
@@ -61,15 +53,23 @@ function RunRow({
           .catch((cause: unknown) => onError(errorMessage(cause)))
       }
     >
-      <Icon
-        size={14}
-        className={`run-symbol ${item.status} ${item.status === "running" ? "spin" : ""}`}
-        aria-label={STATUS_LABELS[item.status]}
-      />
+      <span
+        className="panel-provider"
+        title={PROVIDER_NAMES[item.provider]}
+        aria-label={`${PROVIDER_NAMES[item.provider]} · ${STATUS_LABELS[item.status]}`}
+        role="img"
+      >
+        <ProviderIcon provider={item.provider} size={22} />
+        <Icon
+          size={10}
+          className={`run-symbol ${item.status} ${item.status === "running" ? "spin" : ""}`}
+          aria-hidden="true"
+        />
+      </span>
       <span className="panel-run-copy">
         <span className="panel-run-title">{item.title}</span>
         <span className="panel-run-meta">
-          <span>{SOURCE[item.provider]}</span> {item.project}
+          {item.project}
           {item.branch ? ` · ${item.branch}` : ""}
         </span>
       </span>
@@ -129,16 +129,13 @@ function RunSection({
 }
 
 export function TrayPanel() {
-  const { snapshot, busy, error, setError, refresh, save } = useMonitor();
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [provider, setProvider] = useState<Provider | "all">("all");
-  const [accountId, setAccountId] = useState("all");
+  const { snapshot, refreshing: busy, error, setError, refresh } = useMonitor();
   const [, tick] = useState(0);
   useEffect(() => {
     document.documentElement.classList.add("panel-mode");
     const timer = window.setInterval(() => tick((value) => value + 1), 15_000);
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !settingsOpen)
+      if (event.key === "Escape")
         void bridge
           .hide()
           .catch((cause: unknown) => setError(errorMessage(cause)));
@@ -149,19 +146,10 @@ export function TrayPanel() {
       window.clearInterval(timer);
       window.removeEventListener("keydown", onKey);
     };
-  }, [settingsOpen, setError]);
-  const selectedAccount = snapshot?.settings.accounts.some(
-    (account) => account.id === accountId,
-  )
-    ? accountId
-    : "all";
-  const items = snapshot
-    ? visibleActivities(snapshot, provider, "", undefined, selectedAccount)
-    : [];
+  }, [setError]);
+  const items = snapshot ? panelActivities(snapshot) : [];
   const active = items.filter(isActive);
-  const complete = items.filter(
-    (item) => !isActive(item) && item.status !== "unknown",
-  );
+  const complete = latestCompleted(items);
   const unresolved = items.filter((item) => item.status === "unknown");
   const openDashboard = () =>
     void bridge
@@ -185,13 +173,6 @@ export function TrayPanel() {
           </button>
           <button
             className="panel-icon"
-            aria-label="연결 및 설정"
-            onClick={() => setSettingsOpen(true)}
-          >
-            <Settings2 size={15} />
-          </button>
-          <button
-            className="panel-icon"
             aria-label="패널 닫기"
             onClick={() =>
               void bridge
@@ -204,49 +185,12 @@ export function TrayPanel() {
         </div>
       </header>
       {isPreview && <div className="panel-preview">미리보기 · 가상 데이터</div>}
-      {snapshot && (
-        <div className="panel-filters">
-          <div role="group" aria-label="실행자 범위">
-            <button
-              aria-pressed={snapshot.settings.scope === "mine"}
-              disabled={busy}
-              onClick={() => void save({ ...snapshot.settings, scope: "mine" })}
-            >
-              내 실행
-            </button>
-            <button
-              aria-pressed={snapshot.settings.scope === "all"}
-              disabled={busy}
-              onClick={() => void save({ ...snapshot.settings, scope: "all" })}
-            >
-              전체
-            </button>
-          </div>
-          <select
-            aria-label="서비스 필터"
-            value={provider}
-            onChange={(event) => {
-              setProvider(event.target.value as Provider | "all");
-              setAccountId("all");
-            }}
-          >
-            <option value="all">모든 서비스</option>
-            <option value="github">GitHub Actions</option>
-            <option value="vercel">Vercel</option>
-            <option value="aws">AWS</option>
-          </select>
-        </div>
-      )}
       <div className="panel-scroll">
-        {snapshot && (
-          <div className="panel-account-filter">
-            <AccountFilter
-              snapshot={snapshot}
-              provider={provider}
-              value={selectedAccount}
-              onChange={setAccountId}
-            />
-          </div>
+        {snapshot && snapshot.pendingTargets.length > 0 && (
+          <p className="panel-empty-row" role="status">
+            최근 결과부터 표시 중 · {snapshot.pendingTargets.length}개 대상의
+            진행 상태 확인 중
+          </p>
         )}
         {error && (
           <p className="panel-error" role="alert">
@@ -277,33 +221,43 @@ export function TrayPanel() {
               GitHub · Vercel · AWS
               <br />이 기기의 기존 로그인을 사용합니다.
             </p>
-            <button onClick={() => setSettingsOpen(true)}>
-              서비스 연결 <ChevronRight size={13} />
+            <button onClick={openDashboard}>
+              대시보드에서 연결 <ChevronRight size={13} />
             </button>
           </div>
         ) : (
           <>
-            <RunSection
-              title="진행 중"
-              items={active}
-              limit={12}
-              onError={setError}
-            />
-            <RunSection
-              title={
-                snapshot.settings.historyHours === 24
-                  ? "최근 24시간"
-                  : "최근 7일"
-              }
-              items={complete}
-              limit={8}
-              onError={setError}
-            />
+            {snapshot.settings.panel.showActive && (
+              <RunSection
+                title="진행 중"
+                items={active}
+                limit={snapshot.settings.panel.rowLimit}
+                onError={setError}
+              />
+            )}
+            {snapshot.settings.panel.showCompleted && (
+              <RunSection
+                title={
+                  snapshot.settings.historyHours === 24
+                    ? "최근 24시간"
+                    : "최근 7일"
+                }
+                items={complete}
+                limit={snapshot.settings.panel.rowLimit}
+                onError={setError}
+              />
+            )}
+            {!snapshot.settings.panel.showActive &&
+              !snapshot.settings.panel.showCompleted && (
+                <p className="panel-empty-row">
+                  표시할 섹션은 대시보드에서 설정할 수 있습니다.
+                </p>
+              )}
             {unresolved.length > 0 && (
               <RunSection
                 title="상태 확인 필요"
                 items={unresolved}
-                limit={4}
+                limit={snapshot.settings.panel.rowLimit}
                 onError={setError}
               />
             )}
@@ -319,17 +273,9 @@ export function TrayPanel() {
               : "연결 대기"}
         </span>
         <button onClick={openDashboard}>
-          상세 보기 <ArrowUpRight size={13} />
+          대시보드 열기 <ArrowUpRight size={13} />
         </button>
       </footer>
-      {settingsOpen && snapshot && (
-        <Connections
-          snapshot={snapshot}
-          onClose={() => setSettingsOpen(false)}
-          onSave={save}
-          onRefresh={refresh}
-        />
-      )}
     </main>
   );
 }

@@ -82,6 +82,11 @@ mod tests {
         let store = SettingsStore::new(directory.clone());
         let settings = Settings {
             history_hours: 168,
+            panel: crate::panel::PanelSettings {
+                row_limit: 3,
+                show_completed: false,
+                ..crate::panel::PanelSettings::default()
+            },
             ..Settings::default()
         };
         store.save(settings.clone()).await.expect("save settings");

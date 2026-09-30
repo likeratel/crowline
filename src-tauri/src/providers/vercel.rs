@@ -1,13 +1,14 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
+use futures::future::join_all;
 use serde::Deserialize;
 
 use crate::{
     cli::{CliError, CliInvocation},
     models::{
-        Activity, ActivityStatus, Connection, ConnectionStatus, Discovery, Issue, Ownership,
-        Provider, Target,
+        Activity, ActivityPage, ActivityStatus, Connection, ConnectionStatus, Discovery, Issue,
+        Ownership, Provider, Target,
     },
 };
 
@@ -15,6 +16,9 @@ const MAX_TEAM_PAGES: usize = 3;
 const MAX_PROJECT_PAGES: usize = 5;
 const MAX_DEPLOYMENT_PAGES: usize = 5;
 const PAGE_SIZE: usize = 100;
+const RECENT_PAGE_SIZE: usize = 20;
+const MAX_ACTIVE_DEPLOYMENT_PAGES: usize = 2;
+const ACTIVE_STATES: [&str; 3] = ["BUILDING", "INITIALIZING", "QUEUED"];
 
 #[derive(Clone, Deserialize)]
 struct UserEnvelope {
@@ -30,7 +34,7 @@ struct VercelUser {
 #[derive(Deserialize)]
 struct TeamsResponse {
     teams: Vec<Team>,
-    pagination: Option<Pagination>,
+    pagination: Pagination,
 }
 
 #[derive(Deserialize)]
@@ -42,7 +46,7 @@ struct Team {
 #[derive(Deserialize)]
 struct ProjectsResponse {
     projects: Vec<Project>,
-    pagination: Option<Pagination>,
+    pagination: Pagination,
 }
 
 #[derive(Deserialize)]
@@ -56,7 +60,7 @@ struct Project {
 #[derive(Deserialize)]
 struct DeploymentsResponse {
     deployments: Vec<Deployment>,
-    pagination: Option<Pagination>,
+    pagination: Pagination,
 }
 
 #[derive(Deserialize)]
@@ -69,7 +73,6 @@ struct Pagination {
 struct Deployment {
     uid: String,
     name: String,
-    url: Option<String>,
     inspector_url: Option<String>,
     created: i64,
     ready: Option<i64>,
@@ -85,6 +88,12 @@ struct Deployment {
 struct Creator {
     uid: Option<String>,
     username: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+struct VerifiedIdentity<'a> {
+    uid: Option<&'a str>,
+    username: Option<&'a str>,
 }
 
 struct ProjectContext {
@@ -193,7 +202,11 @@ async fn discover_teams(cli: &CliInvocation) -> Result<(Vec<Team>, bool), CliErr
         // always receive an explicit team scope, independent of currentTeam.
         let response: TeamsResponse = vercel_json(cli, &endpoint, None).await?;
         teams.extend(response.teams);
-        cursor = pagination_cursor(response.pagination);
+        let next_cursor = pagination_cursor(response.pagination)?;
+        if next_cursor.is_some() && next_cursor == cursor {
+            return Err(CliError::InvalidOutput);
+        }
+        cursor = next_cursor;
         if cursor.is_none() {
             return Ok((teams, false));
         }
@@ -223,7 +236,11 @@ async fn discover_projects(
             scope_id: scope_id.map(str::to_owned),
             scope_slug: scope_slug.to_owned(),
         }));
-        cursor = pagination_cursor(response.pagination);
+        let next_cursor = pagination_cursor(response.pagination)?;
+        if next_cursor.is_some() && next_cursor == cursor {
+            return Err(CliError::InvalidOutput);
+        }
+        cursor = next_cursor;
         if cursor.is_none() {
             return Ok((projects, false));
         }
@@ -278,6 +295,191 @@ fn failed_discovery(error: CliError, version: Option<String>, connection_id: &st
     }
 }
 
+pub async fn page(
+    cli: &CliInvocation,
+    target: &Target,
+    cursor: Option<&str>,
+    identity: Option<&str>,
+) -> Result<ActivityPage, CliError> {
+    let (project_id, scope) = validate_vercel_target(target)?;
+    let endpoint = deployment_endpoint(project_id, RECENT_PAGE_SIZE, cursor, None)?;
+    let response: DeploymentsResponse = vercel_json(cli, &endpoint, Some(scope)).await?;
+    let next_cursor = pagination_cursor(response.pagination)?;
+    if next_cursor
+        .as_deref()
+        .is_some_and(|next| Some(next) == cursor)
+    {
+        return Err(CliError::InvalidOutput);
+    }
+    let verified_identity = VerifiedIdentity {
+        uid: None,
+        username: identity,
+    };
+    let activities = response
+        .deployments
+        .into_iter()
+        .map(|deployment| map_deployment(deployment, target, verified_identity))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ActivityPage {
+        activities,
+        next_cursor,
+        issues: Vec::new(),
+    })
+}
+
+pub async fn active(
+    cli: &CliInvocation,
+    target: &Target,
+    identity: Option<&str>,
+) -> Result<ActivityPage, CliError> {
+    let (project_id, scope) = validate_vercel_target(target)?;
+    let results = join_all(
+        ACTIVE_STATES
+            .iter()
+            .map(|state| fetch_active_state(cli, project_id, scope, state)),
+    )
+    .await;
+    let mut deployments = Vec::new();
+    let mut issues = Vec::new();
+    for (state, (mut state_deployments, truncated, error)) in ACTIVE_STATES.into_iter().zip(results)
+    {
+        deployments.append(&mut state_deployments);
+        if truncated {
+            issues.push(target_issue(
+                target,
+                format!(
+                    "Vercel active {state} deployments reached the {MAX_ACTIVE_DEPLOYMENT_PAGES}-page safety limit. Active results are partial."
+                ),
+            ));
+        }
+        if let Some(error) = error {
+            issues.push(target_issue(
+                target,
+                format!(
+                    "Vercel active {state} probe failed: {}",
+                    error.user_message("Vercel")
+                ),
+            ));
+        }
+    }
+    let verified_identity = VerifiedIdentity {
+        uid: None,
+        username: identity,
+    };
+    let mut seen = HashSet::new();
+    let activities = deployments
+        .into_iter()
+        .map(|deployment| map_deployment(deployment, target, verified_identity))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|activity| seen.insert(activity.id.clone()))
+        .collect();
+    Ok(ActivityPage {
+        activities,
+        next_cursor: None,
+        issues,
+    })
+}
+
+async fn fetch_active_state(
+    cli: &CliInvocation,
+    project_id: &str,
+    scope: &str,
+    state: &str,
+) -> (Vec<Deployment>, bool, Option<CliError>) {
+    let mut deployments = Vec::new();
+    let mut cursor = None;
+    for _ in 0..MAX_ACTIVE_DEPLOYMENT_PAGES {
+        let endpoint =
+            match deployment_endpoint(project_id, PAGE_SIZE, cursor.as_deref(), Some(state)) {
+                Ok(endpoint) => endpoint,
+                Err(error) => return (deployments, false, Some(error)),
+            };
+        let response: DeploymentsResponse = match vercel_json(cli, &endpoint, Some(scope)).await {
+            Ok(response) => response,
+            Err(error) => return (deployments, false, Some(error)),
+        };
+        deployments.extend(response.deployments);
+        let next_cursor = match pagination_cursor(response.pagination) {
+            Ok(cursor) => cursor,
+            Err(error) => return (deployments, false, Some(error)),
+        };
+        if next_cursor.is_some() && next_cursor == cursor {
+            return (deployments, false, Some(CliError::InvalidOutput));
+        }
+        cursor = next_cursor;
+        if cursor.is_none() {
+            return (deployments, false, None);
+        }
+    }
+    (deployments, true, None)
+}
+
+fn deployment_endpoint(
+    project_id: &str,
+    limit: usize,
+    cursor: Option<&str>,
+    state: Option<&str>,
+) -> Result<String, CliError> {
+    validate_vercel_id(project_id).map_err(|_| CliError::InvalidOutput)?;
+    if let Some(cursor) = cursor {
+        validate_timestamp_cursor(cursor)?;
+    }
+    if state.is_some_and(|value| !ACTIVE_STATES.contains(&value)) {
+        return Err(CliError::InvalidOutput);
+    }
+    let mut endpoint = format!("/v7/deployments?projectId={project_id}&limit={limit}");
+    if let Some(cursor) = cursor {
+        endpoint.push_str("&until=");
+        endpoint.push_str(cursor);
+    }
+    if let Some(state) = state {
+        endpoint.push_str("&state=");
+        endpoint.push_str(state);
+    }
+    Ok(endpoint)
+}
+
+fn validate_timestamp_cursor(value: &str) -> Result<(), CliError> {
+    if !value.is_empty()
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+        && value.parse::<i64>().is_ok_and(|timestamp| timestamp > 0)
+    {
+        Ok(())
+    } else {
+        Err(CliError::InvalidOutput)
+    }
+}
+
+fn validate_vercel_target(target: &Target) -> Result<(&str, &str), CliError> {
+    if target.provider != Provider::Vercel {
+        return Err(CliError::InvalidOutput);
+    }
+    let project_id = target
+        .metadata
+        .get("projectId")
+        .ok_or(CliError::InvalidOutput)?;
+    let scope = target
+        .metadata
+        .get("scopeSlug")
+        .ok_or(CliError::InvalidOutput)?;
+    validate_vercel_id(project_id).map_err(|_| CliError::InvalidOutput)?;
+    validate_scope(scope).map_err(|_| CliError::InvalidOutput)?;
+    if let Some(team_id) = target.metadata.get("teamId") {
+        validate_vercel_id(team_id).map_err(|_| CliError::InvalidOutput)?;
+    }
+    Ok((project_id, scope))
+}
+
+fn target_issue(target: &Target, message: String) -> Issue {
+    Issue {
+        provider: Provider::Vercel,
+        connection_id: Some(target.connection_id.clone()),
+        message,
+        target_id: Some(target.id.clone()),
+    }
+}
+
 pub async fn collect(
     cli: Option<&CliInvocation>,
     targets: &[Target],
@@ -318,7 +520,11 @@ pub async fn collect(
     let mut activities = Vec::new();
     let mut issues = Vec::new();
     for target in targets {
-        match collect_project(cli, target, cutoff, identity.as_ref()).await {
+        let verified_identity = identity.as_ref().map(|user| VerifiedIdentity {
+            uid: Some(user.id.as_str()),
+            username: Some(user.username.as_str()),
+        });
+        match collect_project(cli, target, cutoff, verified_identity).await {
             Ok((mut target_activities, truncated)) => {
                 activities.append(&mut target_activities);
                 if truncated {
@@ -348,28 +554,13 @@ async fn collect_project(
     cli: &CliInvocation,
     target: &Target,
     cutoff: DateTime<Utc>,
-    identity: Option<&VercelUser>,
+    identity: Option<VerifiedIdentity<'_>>,
 ) -> Result<(Vec<Activity>, bool), CliError> {
-    let project_id = target
-        .metadata
-        .get("projectId")
-        .ok_or(CliError::InvalidOutput)?;
-    validate_vercel_id(project_id).map_err(|_| CliError::InvalidOutput)?;
-    if let Some(team_id) = target.metadata.get("teamId") {
-        validate_vercel_id(team_id).map_err(|_| CliError::InvalidOutput)?;
-    }
+    let (project_id, scope) = validate_vercel_target(target)?;
     let mut activities = Vec::new();
     let mut cursor = None;
     for _ in 0..MAX_DEPLOYMENT_PAGES {
-        let mut endpoint = format!("/v6/deployments?projectId={project_id}&limit={PAGE_SIZE}");
-        if let Some(next) = cursor.as_deref() {
-            endpoint.push_str("&until=");
-            endpoint.push_str(next);
-        }
-        let scope = target
-            .metadata
-            .get("scopeSlug")
-            .ok_or(CliError::InvalidOutput)?;
+        let endpoint = deployment_endpoint(project_id, PAGE_SIZE, cursor.as_deref(), None)?;
         let response: DeploymentsResponse = vercel_json(cli, &endpoint, Some(scope)).await?;
         for deployment in response.deployments {
             let terminal_time = deployment
@@ -379,10 +570,21 @@ async fn collect_project(
             if !is_terminal(&deployment.state)
                 || terminal_time.is_none_or(|finished| finished >= cutoff)
             {
-                activities.push(map_deployment(deployment, target, identity)?);
+                activities.push(map_deployment(
+                    deployment,
+                    target,
+                    identity.unwrap_or(VerifiedIdentity {
+                        uid: None,
+                        username: None,
+                    }),
+                )?);
             }
         }
-        cursor = pagination_cursor(response.pagination);
+        let next_cursor = pagination_cursor(response.pagination)?;
+        if next_cursor.is_some() && next_cursor == cursor {
+            return Err(CliError::InvalidOutput);
+        }
+        cursor = next_cursor;
         if cursor.is_none() {
             return Ok((activities, false));
         }
@@ -429,42 +631,38 @@ fn validate_scope(value: &str) -> Result<(), ()> {
     }
 }
 
-fn pagination_cursor(pagination: Option<Pagination>) -> Option<String> {
-    pagination
-        .and_then(|value| value.next)
-        .and_then(|value| match value {
-            serde_json::Value::String(value) => Some(value),
-            serde_json::Value::Number(value) => Some(value.to_string()),
-            _ => None,
-        })
-        .filter(|value| value.chars().all(|character| character.is_ascii_digit()))
+fn pagination_cursor(pagination: Pagination) -> Result<Option<String>, CliError> {
+    let Some(value) = pagination.next else {
+        return Ok(None);
+    };
+    let cursor = match value {
+        serde_json::Value::String(value) => value,
+        serde_json::Value::Number(value) => value.to_string(),
+        _ => return Err(CliError::InvalidOutput),
+    };
+    validate_timestamp_cursor(&cursor)?;
+    Ok(Some(cursor))
 }
 
 fn map_deployment(
     deployment: Deployment,
     target: &Target,
-    identity: Option<&VercelUser>,
+    identity: VerifiedIdentity<'_>,
 ) -> Result<Activity, CliError> {
+    validate_vercel_id(&deployment.uid).map_err(|_| CliError::InvalidOutput)?;
     let created = timestamp(deployment.created).ok_or(CliError::InvalidOutput)?;
-    let terminal_time = deployment
-        .ready
-        .or(deployment.updated_at)
-        .and_then(timestamp);
+    let ready = optional_timestamp(deployment.ready)?;
+    let updated_at = optional_timestamp(deployment.updated_at)?;
+    if ready.is_some_and(|value| value < created) || updated_at.is_some_and(|value| value < created)
+    {
+        return Err(CliError::InvalidOutput);
+    }
+    let terminal_time = ready.or(updated_at);
     let actor = deployment
         .creator
         .as_ref()
         .and_then(|creator| creator.username.clone().or_else(|| creator.uid.clone()));
-    let ownership = match (
-        deployment
-            .creator
-            .as_ref()
-            .and_then(|creator| creator.uid.as_deref()),
-        identity,
-    ) {
-        (Some(creator), Some(user)) if creator == user.id => Ownership::Mine,
-        (Some(_), Some(_)) => Ownership::Other,
-        _ => Ownership::Unknown,
-    };
+    let ownership = deployment_ownership(deployment.creator.as_ref(), identity);
     let branch = deployment
         .meta
         .get("githubCommitRef")
@@ -472,10 +670,9 @@ fn map_deployment(
         .map(str::to_owned);
     let url = deployment
         .inspector_url
-        .filter(|url| url.starts_with("https://vercel.com/"))
-        .or_else(|| deployment.url.map(|url| format!("https://{url}")))
+        .filter(|url| is_trusted_vercel_url(url))
         .unwrap_or_else(|| deployment_dashboard_url(target, &deployment.uid));
-    let status = vercel_status(&deployment.state);
+    let status = vercel_status(&deployment.state)?;
     let finished_at = is_terminal(&deployment.state)
         .then(|| terminal_time.map(|value| value.to_rfc3339()))
         .flatten();
@@ -499,6 +696,39 @@ fn map_deployment(
     })
 }
 
+fn deployment_ownership(creator: Option<&Creator>, identity: VerifiedIdentity<'_>) -> Ownership {
+    let Some(creator) = creator else {
+        return Ownership::Unknown;
+    };
+    if let (Some(expected), Some(actual)) = (identity.uid, creator.uid.as_deref()) {
+        return if expected == actual {
+            Ownership::Mine
+        } else {
+            Ownership::Other
+        };
+    }
+    if let (Some(expected), Some(actual)) = (identity.username, creator.username.as_deref()) {
+        return if expected == actual {
+            Ownership::Mine
+        } else {
+            Ownership::Other
+        };
+    }
+    Ownership::Unknown
+}
+
+fn is_trusted_vercel_url(value: &str) -> bool {
+    url::Url::parse(value).is_ok_and(|url| {
+        url.scheme() == "https"
+            && url.host_str() == Some("vercel.com")
+            && url.port_or_known_default() == Some(443)
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none()
+    })
+}
+
 fn deployment_dashboard_url(target: &Target, deployment_id: &str) -> String {
     let encode =
         |value: &str| url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>();
@@ -516,23 +746,32 @@ fn deployment_dashboard_url(target: &Target, deployment_id: &str) -> String {
 }
 
 fn timestamp(milliseconds: i64) -> Option<DateTime<Utc>> {
-    Utc.timestamp_millis_opt(milliseconds).single()
+    (milliseconds > 0)
+        .then(|| Utc.timestamp_millis_opt(milliseconds).single())
+        .flatten()
+}
+
+fn optional_timestamp(milliseconds: Option<i64>) -> Result<Option<DateTime<Utc>>, CliError> {
+    milliseconds
+        .map(|value| timestamp(value).ok_or(CliError::InvalidOutput))
+        .transpose()
 }
 
 fn is_terminal(state: &str) -> bool {
-    matches!(state, "READY" | "ERROR" | "CANCELED")
+    matches!(state, "READY" | "ERROR" | "CANCELED" | "BLOCKED")
 }
 
-fn vercel_status(state: &str) -> ActivityStatus {
-    match state {
+fn vercel_status(state: &str) -> Result<ActivityStatus, CliError> {
+    let mapped = match state {
         "QUEUED" | "INITIALIZING" => ActivityStatus::Queued,
         "BUILDING" => ActivityStatus::Running,
-        "BLOCKED" => ActivityStatus::Waiting,
+        "BLOCKED" => ActivityStatus::Skipped,
         "READY" => ActivityStatus::Success,
         "ERROR" => ActivityStatus::Failed,
         "CANCELED" => ActivityStatus::Canceled,
-        _ => ActivityStatus::Unknown,
-    }
+        _ => return Err(CliError::InvalidOutput),
+    };
+    Ok(mapped)
 }
 
 fn validate_vercel_id(value: &str) -> Result<(), ()> {
@@ -549,91 +788,5 @@ fn validate_vercel_id(value: &str) -> Result<(), ()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn unused_provider_never_requires_authentication() {
-        let (activities, issues) = collect(None, &[], 24, "vercel:local").await;
-        assert!(activities.is_empty());
-        assert!(issues.is_empty());
-    }
-
-    #[test]
-    fn status_mapping_covers_known_vercel_states() {
-        assert_eq!(vercel_status("QUEUED"), ActivityStatus::Queued);
-        assert_eq!(vercel_status("BUILDING"), ActivityStatus::Running);
-        assert_eq!(vercel_status("BLOCKED"), ActivityStatus::Waiting);
-        assert_eq!(vercel_status("READY"), ActivityStatus::Success);
-        assert_eq!(vercel_status("ERROR"), ActivityStatus::Failed);
-    }
-
-    #[test]
-    fn attribution_requires_creator_identity() {
-        let identity = VercelUser {
-            id: "user_123".into(),
-            username: "person".into(),
-        };
-        let creator = Creator {
-            uid: None,
-            username: Some("person".into()),
-        };
-        let ownership = match (creator.uid.as_deref(), Some(&identity)) {
-            (Some(value), Some(user)) if value == user.id => Ownership::Mine,
-            (Some(_), Some(_)) => Ownership::Other,
-            _ => Ownership::Unknown,
-        };
-        assert_eq!(ownership, Ownership::Unknown);
-    }
-
-    #[test]
-    fn ids_reject_query_injection() {
-        assert!(validate_vercel_id("prj_123-Abc").is_ok());
-        assert!(validate_vercel_id("prj_123&teamId=other").is_err());
-        assert!(validate_scope("demo-team").is_ok());
-        assert!(validate_scope("demo-team --token secret").is_err());
-    }
-
-    #[test]
-    fn pagination_cursor_accepts_only_numeric_tokens() {
-        let numeric = Pagination {
-            next: Some(serde_json::json!(1_700_000_000_000_i64)),
-        };
-        let invalid = Pagination {
-            next: Some(serde_json::json!("12&teamId=other")),
-        };
-        assert_eq!(
-            pagination_cursor(Some(numeric)).as_deref(),
-            Some("1700000000000")
-        );
-        assert_eq!(pagination_cursor(Some(invalid)), None);
-    }
-
-    #[test]
-    fn terminal_deployment_without_timestamps_uses_dashboard_and_no_finished_time() {
-        let target = Target {
-            id: "personal:prj_123".into(),
-            provider: Provider::Vercel,
-            connection_id: "vercel:local".into(),
-            name: "rocket".into(),
-            description: None,
-            metadata: HashMap::from([("scopeSlug".into(), "demo-team".into())]),
-        };
-        let deployment = Deployment {
-            uid: "dpl_123".into(),
-            name: "rocket".into(),
-            url: None,
-            inspector_url: None,
-            created: 1_700_000_000_000,
-            ready: None,
-            updated_at: None,
-            state: "ERROR".into(),
-            creator: None,
-            meta: HashMap::new(),
-            target: Some("production".into()),
-        };
-        let activity = map_deployment(deployment, &target, None).expect("map deployment");
-        assert_eq!(activity.finished_at, None);
-        assert_eq!(activity.url, "https://vercel.com/demo-team/rocket/dpl_123");
-    }
-}
+#[path = "vercel_tests.rs"]
+mod tests;
