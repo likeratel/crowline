@@ -1,0 +1,107 @@
+.settings-page {
+  max-width: 980px;
+}
+.settings-page [hidden] {
+  display: none !important;
+}
+.settings-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--canvas);
+  padding-top: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-3);
+}
+.settings-tabs button {
+  min-height: var(--control-height);
+  padding: 0 var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  background: transparent;
+  font-size: 13px;
+  cursor: pointer;
+}
+.settings-tabs button[aria-selected="true"] {
+  color: var(--text);
+  background: var(--soft);
+  border-color: var(--border);
+}
+.settings-page .panel-preferences {
+  max-width: none;
+}
+.connections-settings {
+  min-width: 0;
+}
+.connections-settings .dialog-header {
+  padding: 0 0 var(--space-4);
+  border: 0;
+}
+.connections-settings .dialog-header h2 {
+  font-size: 16px;
+  letter-spacing: 0;
+}
+.connections-settings .dialog-body {
+  padding: 0;
+  overflow: visible;
+  scrollbar-gutter: auto;
+}
+.connections-settings .dialog-footer {
+  padding-inline: 0;
+}
+@media (max-width: 620px) {
+  .settings-tabs {
+    gap: var(--space-1);
+  }
+  .settings-tabs button {
+    padding-inline: var(--space-3);
+    flex: 1 1 auto;
+  }
+}
+.settings-tabs {
+  margin-bottom: var(--space-4);
+}
+.setting-feedback {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: 12px;
+}
+.setting-error {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+  color: #d5a4a4;
+}
+.setting-error details {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.setting-error summary {
+  cursor: pointer;
+}
+.account-alias-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.account-alias-field input {
+  flex: 1;
+  min-width: 0;
+}
+.connection-help {
+  margin-block: var(--space-3);
+  color: var(--muted);
+  font-size: 12px;
+}
+.connection-help summary {
+  cursor: pointer;
+}
+.connection-help p {
+  margin-top: var(--space-2);
+}

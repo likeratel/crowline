@@ -1,5 +1,8 @@
 use super::*;
-use std::sync::Mutex as StdMutex;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering as AtomicOrdering},
+    Mutex as StdMutex,
+};
 
 fn target(name: &str) -> Target {
     Target {
@@ -42,6 +45,7 @@ fn state() -> AppState {
         settings_revision: AtomicU64::new(0),
         refresh_epoch: AtomicU64::new(1),
         history_lock: Mutex::new(()),
+        notification_engine: Mutex::new(NotificationEngine::default()),
         login_statuses: Mutex::new(HashMap::new()),
     }
 }
@@ -51,6 +55,112 @@ impl SnapshotPublisher for Recorder {
     fn publish_snapshot(&self, snapshot: &Snapshot) {
         self.0.lock().unwrap().push(snapshot.clone());
     }
+}
+
+#[derive(Default)]
+struct FailOncePublisher {
+    attempts: AtomicUsize,
+    snapshots: StdMutex<Vec<Snapshot>>,
+}
+
+impl SnapshotPublisher for FailOncePublisher {
+    fn publish_snapshot(&self, snapshot: &Snapshot) {
+        self.snapshots.lock().unwrap().push(snapshot.clone());
+    }
+
+    fn publish_notification(&self, _notification: &NativeNotification) -> Result<(), String> {
+        if self.attempts.fetch_add(1, AtomicOrdering::SeqCst) == 0 {
+            Err("synthetic notification failure".into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[tokio::test]
+async fn warning_rows_notify_and_failed_native_delivery_retries_next_generation() {
+    let state = state();
+    let selected = target("warning");
+    let mut settings = Settings {
+        targets: vec![selected.clone()],
+        ..Settings::default()
+    };
+    settings.preferences.notifications.enabled = true;
+    settings.preferences.notifications.rules = vec![crate::preferences::NotificationRule {
+        target_key: selected.key(),
+        scope: crate::preferences::NotificationScope::All,
+        statuses: vec![ActivityStatus::Failed],
+        enabled: true,
+    }];
+    state.snapshot.write().await.settings = settings;
+    let publisher = FailOncePublisher::default();
+    let running = activity(&selected, "run", ActivityStatus::Running);
+
+    state.refresh_epoch.store(1, Ordering::SeqCst);
+    state
+        .publish_page(
+            &selected,
+            Ok(ActivityPage {
+                activities: vec![running.clone()],
+                ..ActivityPage::default()
+            }),
+            PageKind::Recent,
+            0,
+            1,
+            &publisher,
+        )
+        .await;
+
+    let provider_warning = Issue {
+        provider: selected.provider,
+        connection_id: Some(selected.connection_id.clone()),
+        target_id: Some(selected.id.clone()),
+        message: "Synthetic provider warning".into(),
+    };
+    let failed = Activity {
+        status: ActivityStatus::Failed,
+        updated_at: (Utc::now() + chrono::Duration::seconds(1)).to_rfc3339(),
+        ..running
+    };
+    state.refresh_epoch.store(2, Ordering::SeqCst);
+    state
+        .publish_page(
+            &selected,
+            Ok(ActivityPage {
+                activities: vec![failed.clone()],
+                next_cursor: None,
+                issues: vec![provider_warning.clone()],
+            }),
+            PageKind::Recent,
+            0,
+            2,
+            &publisher,
+        )
+        .await;
+    assert_eq!(publisher.attempts.load(AtomicOrdering::SeqCst), 1);
+    assert!(state
+        .snapshot()
+        .await
+        .issues
+        .iter()
+        .any(|issue| issue.message.contains("synthetic notification failure")));
+
+    state.refresh_epoch.store(3, Ordering::SeqCst);
+    state
+        .publish_page(
+            &selected,
+            Ok(ActivityPage {
+                activities: vec![failed],
+                next_cursor: None,
+                issues: vec![provider_warning],
+            }),
+            PageKind::Recent,
+            0,
+            3,
+            &publisher,
+        )
+        .await;
+    assert_eq!(publisher.attempts.load(AtomicOrdering::SeqCst), 2);
 }
 
 #[cfg(unix)]

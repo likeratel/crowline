@@ -2,10 +2,10 @@ import { expect, test } from "@playwright/test";
 
 test.use({ viewport: { width: 420, height: 540 } });
 
-test("an open settings draft preserves another window's changes and account removal", async ({
+test("an open settings view reconciles another window's account removal", async ({
   page,
 }) => {
-  await page.route("**/src/bridge.ts", async (route) => {
+  await page.route(/\/src\/bridge\.ts(?:\?.*)?$/, async (route) => {
     const response = await route.fetch();
     const source = (await response.text()).replace(
       "if (isPreview) return () => {};",
@@ -18,8 +18,9 @@ test("an open settings draft preserves another window's changes and account remo
     await route.fulfill({ response, body: source });
   });
   await page.goto("/?view=dashboard");
-  await page.getByRole("button", { name: "연결 및 설정" }).click();
-  await page.getByRole("checkbox").uncheck();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const connections = page.getByRole("tabpanel", { name: "서비스 연결" });
+  await connections.getByRole("checkbox").uncheck();
   await page.evaluate(async () => {
     const modulePath = "/src/demo.ts";
     const { demoSnapshot } = await import(modulePath);
@@ -41,11 +42,15 @@ test("an open settings draft preserves another window's changes and account remo
       }),
     );
   });
-  await expect(page.getByText("총 1개 대상", { exact: true })).toBeVisible();
-  await expect(page.getByRole("checkbox")).not.toBeChecked();
-  await page.getByRole("button", { name: "설정 저장" }).click();
-  await page.getByRole("button", { name: "연결 및 설정" }).click();
-  await expect(page.getByText("총 1개 대상", { exact: true })).toBeVisible();
+  await expect(
+    connections.getByLabel("연결할 계정").locator("option"),
+  ).toHaveCount(1);
+  await expect(connections.locator(".target-option input")).toBeChecked();
+  await page.getByRole("button", { name: "전체 서비스", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await expect(
+    connections.getByLabel("연결할 계정").locator("option"),
+  ).toHaveCount(1);
 });
 
 test("default view is a compact summary with dashboard entry and no settings controls", async ({
@@ -59,10 +64,11 @@ test("default view is a compact summary with dashboard entry and no settings con
       .getByRole("region", { name: "진행 중", exact: true })
       .locator(".panel-run"),
   ).toHaveCount(2);
-  await expect(page.getByLabel("서비스 필터")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "연결 및 설정" })).toHaveCount(
-    0,
+  await expect(page.locator(".panel-scope")).toContainText(
+    "내 실행 · 3/3개 대상",
   );
+  await expect(page.getByLabel("서비스 필터")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "설정" })).toHaveCount(0);
   await page.screenshot({ path: "artifacts/crowline-panel.png" });
   expect(
     await page.evaluate(
@@ -80,17 +86,20 @@ test("connection controls remain usable in a narrow dashboard", async ({
   page,
 }) => {
   await page.goto("/?view=dashboard");
-  await page.getByRole("button", { name: "연결 및 설정" }).click();
-  await expect(page.getByRole("dialog", { name: "서비스 연결" })).toBeVisible();
-  await page.getByRole("tab", { name: "AWS", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const connections = page.getByRole("tabpanel", { name: "서비스 연결" });
+  await expect(connections.locator(".connections-settings")).toBeVisible();
+  await connections.getByRole("tab", { name: "AWS", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "프로필", exact: true }),
   ).toHaveValue("development");
-  await expect(page.getByRole("button", { name: "설정 저장" })).toBeVisible();
+  await expect(
+    connections.getByRole("button", { name: "설정 저장" }),
+  ).toHaveCount(0);
   expect(
-    await page
-      .getByRole("dialog")
-      .evaluate((dialog) => dialog.scrollWidth <= dialog.clientWidth),
+    await connections.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
   ).toBe(true);
   await page.screenshot({ path: "artifacts/crowline-panel-settings.png" });
 });
@@ -99,19 +108,22 @@ test("adds a separate account without inheriting another account's selected targ
   page,
 }) => {
   await page.goto("/?view=dashboard");
-  await page.getByRole("button", { name: "연결 및 설정" }).click();
-  await page.getByRole("button", { name: "계정 추가", exact: true }).click();
-  await page
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const connections = page.getByRole("tabpanel", { name: "서비스 연결" });
+  await connections
+    .getByRole("button", { name: "계정 추가", exact: true })
+    .click();
+  await connections
     .getByRole("textbox", { name: "계정 이름", exact: true })
     .fill("회사");
-  await page
+  await connections
     .getByRole("button", { name: "계정 연결 추가", exact: true })
     .click();
-  await expect(page.getByLabel("연결할 계정")).toContainText("회사");
-  await page.getByRole("button", { name: "연결 및 대상 확인" }).click();
-  await expect(page.getByRole("checkbox")).not.toBeChecked();
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "설정 저장" }).click();
+  await expect(connections.getByLabel("연결할 계정")).toContainText("회사");
+  await connections.getByRole("button", { name: "연결 및 대상 확인" }).click();
+  await expect(connections.locator(".target-option input")).not.toBeChecked();
+  await connections.locator(".target-option input").check();
+  await page.getByRole("button", { name: "전체 서비스", exact: true }).click();
   await expect(page.getByLabel("계정 필터")).toContainText("회사");
   await page
     .getByLabel("계정 필터")
@@ -123,32 +135,50 @@ test("keeps login feedback per account and preserves other selections on removal
   page,
 }) => {
   await page.goto("/?view=dashboard");
-  await page.getByRole("button", { name: "연결 및 설정" }).click();
-  await page.getByRole("button", { name: "브라우저로 로그인" }).click();
-  const feedback = page.getByText(
-    "로그인은 데스크톱 앱에서 사용할 수 있습니다.",
-  );
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const connections = page.getByRole("tabpanel", { name: "서비스 연결" });
+  await connections.getByRole("button", { name: "브라우저로 로그인" }).click();
+  const feedback = page.getByText("데스크톱 앱에서 사용할 수 있습니다.");
   await expect(feedback).toBeVisible();
-  await page.getByRole("button", { name: "계정 추가", exact: true }).click();
-  await page
+  await connections
+    .getByRole("button", { name: "계정 추가", exact: true })
+    .click();
+  await connections
     .getByRole("textbox", { name: "계정 이름", exact: true })
     .fill("회사");
-  await page
+  await connections
     .getByRole("button", { name: "계정 연결 추가", exact: true })
     .click();
   await expect(feedback).not.toBeVisible();
-  await page.getByRole("button", { name: "연결 및 대상 확인" }).click();
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "브라우저로 로그인" }).click();
-  await page.getByLabel("연결할 계정").selectOption("github:local");
+  await connections.getByRole("button", { name: "연결 및 대상 확인" }).click();
+  await connections.locator(".target-option input").check();
+  await connections.getByRole("button", { name: "브라우저로 로그인" }).click();
+  await connections.getByLabel("연결할 계정").selectOption("github:local");
   await expect(feedback).toBeVisible();
-  await expect(page.getByRole("checkbox")).toBeChecked();
-  await page.getByLabel("연결할 계정").selectOption({ label: "회사" });
-  await page.getByRole("button", { name: "이 계정 연결 제거" }).click();
-  await expect(page.getByLabel("연결할 계정")).toHaveValue("github:local");
-  await expect(page.getByRole("checkbox")).toBeChecked();
-  await expect(page.getByText("총 3개 대상", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "설정 저장" }).click();
+  await expect(connections.locator(".target-option input")).toBeChecked();
+  await connections.getByLabel("연결할 계정").selectOption({ label: "회사" });
+  await connections.getByRole("button", { name: "이 계정 연결 제거" }).click();
+  await expect(connections.getByLabel("연결할 계정")).toContainText("회사");
+  await connections.getByLabel("연결할 계정").selectOption("github:local");
+  await expect(
+    connections.getByRole("button", { name: "연결 제거", exact: true }),
+  ).toHaveCount(0);
+  await connections.getByLabel("연결할 계정").selectOption({ label: "회사" });
+  await expect(
+    connections.getByRole("button", { name: "연결 제거", exact: true }),
+  ).toHaveCount(0);
+  await connections.getByRole("button", { name: "이 계정 연결 제거" }).click();
+  await connections.getByRole("button", { name: "취소", exact: true }).click();
+  await expect(connections.getByLabel("연결할 계정")).toContainText("회사");
+  await connections.getByRole("button", { name: "이 계정 연결 제거" }).click();
+  await connections
+    .getByRole("button", { name: "연결 제거", exact: true })
+    .click();
+  await expect(connections.getByLabel("연결할 계정")).toHaveValue(
+    "github:local",
+  );
+  await expect(connections.locator(".target-option input")).toBeChecked();
+  await page.getByRole("button", { name: "전체 서비스", exact: true }).click();
   await expect(page.getByLabel("계정 필터")).not.toContainText("회사");
 });
 
@@ -180,27 +210,22 @@ test("saved panel preferences affect the panel while preserving dashboard rows",
     )
     .toBe("function");
   const dashboardCount = await page.locator(".activity-row").count();
-  await page
-    .getByRole("button", { name: "상태바 표시 설정", exact: true })
-    .click();
-  await page
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "메뉴 막대", exact: true }).click();
+  const menuBar = page.getByRole("tabpanel", { name: "메뉴 막대" });
+  await menuBar
     .getByRole("group", { name: "표시할 서비스" })
     .getByLabel("Vercel", { exact: true })
     .uncheck();
-  await page.getByLabel("최근 종료 표시", { exact: true }).uncheck();
-  await page.getByLabel("섹션별 표시 건수").selectOption("1");
-  await page.getByRole("button", { name: "표시 설정 저장" }).click();
-  await expect(page.getByRole("status")).toHaveText(
-    "상태바 표시 설정을 저장했습니다.",
-  );
+  await menuBar.getByLabel("최근 종료 표시", { exact: true }).uncheck();
+  await menuBar.getByLabel("섹션별 표시 건수").selectOption("1");
   await page.getByRole("button", { name: /전체 서비스/ }).click();
   await expect(page.locator(".activity-row")).toHaveCount(dashboardCount);
-  await page
-    .getByRole("button", { name: "상태바 표시 설정", exact: true })
-    .click();
-  await expect(page.getByLabel("섹션별 표시 건수")).toHaveValue("1");
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "메뉴 막대", exact: true }).click();
+  await expect(menuBar.getByLabel("섹션별 표시 건수")).toHaveValue("1");
   await expect(
-    page.getByLabel("최근 종료 표시", { exact: true }),
+    menuBar.getByLabel("최근 종료 표시", { exact: true }),
   ).not.toBeChecked();
   await page.screenshot({
     path: "artifacts/crowline-panel-preferences.png",
@@ -217,6 +242,61 @@ test("saved panel preferences affect the panel while preserving dashboard rows",
   await expect(page.getByRole("region", { name: "최근 24시간" })).toHaveCount(
     0,
   );
+});
+
+test("a menu bar view reconciles a newer provider snapshot", async ({
+  page,
+}) => {
+  await page.route(/\/src\/bridge\.ts(?:\?.*)?$/, async (route) => {
+    const response = await route.fetch();
+    const source = await response.text();
+    const snapshotMarker = "let preview = demoSnapshot();";
+    const subscriptionMarker = "if (isPreview) return () => {};";
+    expect(source).toContain(snapshotMarker);
+    expect(source).toContain(subscriptionMarker);
+    await route.fulfill({
+      response,
+      body: source
+        .replace(
+          snapshotMarker,
+          `${snapshotMarker}
+          preview = { ...preview, settings: { ...preview.settings, panel: { ...preview.settings.panel, providers: preview.settings.panel.providers.filter((provider) => provider !== "aws") } } };`,
+        )
+        .replace(
+          subscriptionMarker,
+          `if (isPreview) {
+          const update = (event) => { preview = event.detail; handler(preview); };
+          window.addEventListener("test-panel-snapshot", update);
+          return () => window.removeEventListener("test-panel-snapshot", update);
+        }`,
+        ),
+    });
+  });
+  await page.goto("/?view=dashboard");
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page.getByRole("tab", { name: "메뉴 막대", exact: true }).click();
+  const menuBar = page.getByRole("tabpanel", { name: "메뉴 막대" });
+  await expect(menuBar.getByLabel("AWS", { exact: true })).not.toBeChecked();
+  await menuBar.getByLabel("GitHub Actions", { exact: true }).uncheck();
+  await page.evaluate(async () => {
+    const { demoSnapshot } = await import("/src/demo.ts");
+    const snapshot = demoSnapshot();
+    window.dispatchEvent(
+      new CustomEvent("test-panel-snapshot", {
+        detail: {
+          ...snapshot,
+          settings: {
+            ...snapshot.settings,
+            panel: { ...snapshot.settings.panel, providers: ["github", "aws"] },
+          },
+        },
+      }),
+    );
+  });
+  await expect(
+    menuBar.getByLabel("GitHub Actions", { exact: true }),
+  ).toBeChecked();
+  await expect(menuBar.getByLabel("AWS", { exact: true })).toBeChecked();
 });
 
 test("summary rows show loaded platform logos alongside their status", async ({
@@ -242,6 +322,33 @@ test("summary rows show loaded platform logos alongside their status", async ({
         ),
     ).toBe(true);
     await expect(row.locator(".run-symbol")).toBeVisible();
+    await expect(row.locator(".run-symbol")).toHaveAttribute("width", "16");
+    await expect(row.locator(".panel-provider .run-symbol")).toHaveCount(0);
   }
   await expect(page.locator(".panel-run-meta")).not.toContainText(["VC "]);
+});
+
+test("explains when all monitored targets are excluded from the panel", async ({
+  page,
+}) => {
+  await page.route(/\/src\/bridge\.ts(?:\?.*)?$/, async (route) => {
+    const response = await route.fetch();
+    const source = await response.text();
+    const marker = "let preview = demoSnapshot();";
+    expect(source).toContain(marker);
+    await route.fulfill({
+      response,
+      body: source.replace(
+        marker,
+        `${marker}
+      preview = { ...preview, settings: { ...preview.settings, panel: { ...preview.settings.panel, providers: [] } } };`,
+      ),
+    });
+  });
+  await page.goto("/");
+  await expect(page.locator(".panel-scope")).toContainText("0/3개 대상");
+  await expect(
+    page.getByText(/표시할 대상이 모두 제외되어 있습니다/),
+  ).toBeVisible();
+  await expect(page.locator(".panel-run")).toHaveCount(0);
 });

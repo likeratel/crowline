@@ -8,15 +8,9 @@ import {
   X,
 } from "lucide-react";
 import { bridge, errorMessage } from "../bridge";
-import {
-  duration,
-  isActive,
-  PROVIDER_NAMES,
-  STATUS_LABELS,
-  timeAgo,
-  type Activity,
-} from "../domain";
+import { isActive, PROVIDER_NAMES, type Activity } from "../domain";
 import { ProviderIcon } from "./ProviderIcon";
+import { formatDuration, formatRelativeTime, useI18n } from "../i18n";
 function StatusIcon({ status }: { status: Activity["status"] }) {
   const Icon =
     status === "running"
@@ -41,14 +35,20 @@ export function ActivityList({
   activities,
   empty,
   onError,
+  compactEmpty = false,
 }: {
   title: string;
   activities: Activity[];
   empty: string;
+  compactEmpty?: boolean;
   onError: (error: string) => void;
 }) {
+  const { locale, t } = useI18n();
   return (
-    <section className="activity-section" aria-label={title}>
+    <section
+      className={`activity-section ${compactEmpty && activities.length === 0 ? "compact-empty" : ""}`}
+      aria-label={title}
+    >
       <div className="section-heading">
         <h2>{title}</h2>
         <span className="count">{activities.length}</span>
@@ -94,7 +94,7 @@ export function ActivityList({
                     </>
                   )}
                   <span className="dot-separator">·</span>
-                  <span>{activity.actor ?? "실행자 미확인"}</span>
+                  <span>{activity.actor ?? t("common.unknownActor")}</span>
                 </div>
               </div>
               <div className="activity-result">
@@ -103,13 +103,20 @@ export function ActivityList({
                   title={activity.rawStatus}
                 >
                   <StatusIcon status={activity.status} />
-                  {STATUS_LABELS[activity.status]}
+                  {t(`status.${activity.status}`)}
                 </span>
                 <span className="activity-time">
                   {isActive(activity)
-                    ? duration(activity)
-                    : timeAgo(activity.finishedAt ?? activity.updatedAt)}
-                  {!isActive(activity) && !activity.finishedAt && " 갱신"}
+                    ? formatDuration(
+                        activity.startedAt,
+                        activity.finishedAt ?? Date.now(),
+                        locale,
+                      )
+                    : activity.finishedAt
+                      ? formatRelativeTime(activity.finishedAt, locale)
+                      : t("activity.updated", {
+                          time: formatRelativeTime(activity.updatedAt, locale),
+                        })}
                 </span>
               </div>
             </button>

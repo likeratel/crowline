@@ -60,8 +60,43 @@ export const panelSettingsSchema = z.object({
   showActive: z.boolean().default(true),
   showCompleted: z.boolean().default(true),
   rowLimit: z.number().int().min(1).max(10).default(5),
+  pinnedTargets: z.array(z.string().min(1).max(1600)).max(500).default([]),
+  failureFirst: z.boolean().default(false),
 });
 export type PanelSettings = z.infer<typeof panelSettingsSchema>;
+
+export const languageSchema = z.enum(["system", "ko", "en", "ja", "zh-CN"]);
+export const notificationRuleSchema = z.object({
+  targetKey: z.string().min(1).max(1600),
+  enabled: z.boolean(),
+  scope: z.enum(["mine", "all"]),
+  statuses: z
+    .array(z.enum(["success", "failed", "canceled"]))
+    .max(3)
+    .refine((items) => new Set(items).size === items.length),
+});
+export const preferencesSchema = z.object({
+  accountAliases: z
+    .record(z.string(), z.string().trim().min(1).max(80))
+    .default({}),
+  language: languageSchema.default("system"),
+  checkUpdatesAutomatically: z.boolean().default(true),
+  notifications: z
+    .object({
+      enabled: z.boolean().default(false),
+      rules: z
+        .array(notificationRuleSchema)
+        .max(500)
+        .refine(
+          (items) =>
+            new Set(items.map((item) => item.targetKey)).size === items.length,
+        )
+        .default([]),
+    })
+    .prefault({}),
+});
+export type Preferences = z.infer<typeof preferencesSchema>;
+export type NotificationRule = z.infer<typeof notificationRuleSchema>;
 
 export const settingsSchema = z.object({
   scope: z.enum(["mine", "all"]),
@@ -69,6 +104,7 @@ export const settingsSchema = z.object({
   targets: z.array(targetSchema),
   accounts: z.array(accountSchema),
   panel: panelSettingsSchema.prefault({}),
+  preferences: preferencesSchema.prefault({}),
 });
 export const connectionSchema = z.object({
   connectionId: z.string(),
@@ -242,7 +278,7 @@ export function visibleActivities(
       (snapshot.settings.scope === "all" || activity.ownership === "mine") &&
       (isActive(activity) ||
         activity.status === "unknown" ||
-        Date.parse(activity.finishedAt ?? activity.updatedAt) >= cutoff) &&
+        Date.parse(activity.updatedAt) >= cutoff) &&
       (!query ||
         [
           activity.title,
@@ -252,9 +288,7 @@ export function visibleActivities(
         ].some((part) => part?.toLocaleLowerCase().includes(query))),
   );
   return filtered.sort(
-    (a, b) =>
-      Date.parse(b.finishedAt ?? b.updatedAt) -
-      Date.parse(a.finishedAt ?? a.updatedAt),
+    (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
   );
 }
 
@@ -297,7 +331,19 @@ export function panelActivities(snapshot: Snapshot, now = Date.now()) {
           !panel.hiddenTargets.includes(targetKey(target)),
       ),
   );
-  return visibleActivities({ ...snapshot, activities }, "all", "", now);
+  return sortPanelActivities(
+    visibleActivities({ ...snapshot, activities }, "all", "", now),
+    panel,
+  );
+}
+
+export function sortPanelActivities(
+  activities: Activity[],
+  _panel: PanelSettings,
+): Activity[] {
+  return [...activities].sort(
+    (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
+  );
 }
 
 export function latestCompleted(activities: Activity[]): Activity[] {
@@ -316,8 +362,7 @@ export function latestCompleted(activities: Activity[]): Activity[] {
         ]);
         const previous = groups[key];
         return !previous ||
-          Date.parse(item.finishedAt ?? item.updatedAt) >
-            Date.parse(previous.finishedAt ?? previous.updatedAt)
+          Date.parse(item.updatedAt) > Date.parse(previous.updatedAt)
           ? { ...groups, [key]: item }
           : groups;
       }, {}),

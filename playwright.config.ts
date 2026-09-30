@@ -3,6 +3,7 @@ export default defineConfig({
   testDir: "./tests",
   fullyParallel: true,
   use: {
+    locale: "ko-KR",
     baseURL: "http://127.0.0.1:1420",
     viewport: { width: 1080, height: 780 },
     trace: "retain-on-failure",

@@ -12,34 +12,54 @@ import {
   RefreshCw,
   Search,
   Settings2,
-  ShieldCheck,
   X,
 } from "lucide-react";
+import { SettingsChangesProvider } from "./settingsChangesContext";
+import { SettingFeedback } from "./components/SettingFeedback";
 import { isPreview } from "./bridge";
 import {
   isActive,
   PROVIDERS,
   PROVIDER_NAMES,
-  timeAgo,
   visibleActivities,
   type Provider,
 } from "./domain";
 import { ActivityList } from "./components/ActivityList";
 import { HistoryBrowser } from "./components/HistoryBrowser";
-import { PanelPreferences } from "./components/PanelPreferences";
-import { Connections } from "./components/Connections";
 import { ProviderIcon } from "./components/ProviderIcon";
 import { useMonitor } from "./useMonitor";
 import { AccountFilter } from "./components/AccountFilter";
+import { SettingsPage } from "./components/SettingsPage";
+import { settingsCopy, type SettingsTab } from "./settingsCopy";
+import { ServiceHealth } from "./components/ServiceHealth";
+import { UpdateNotice } from "./components/UpdateNotice";
+import { I18nProvider, formatRelativeTime, useI18n } from "./i18n";
 import "./App.css";
 
 export default function App() {
   const monitor = useMonitor();
+  return (
+    <I18nProvider language={monitor.snapshot?.settings.preferences.language}>
+      <SettingsChangesProvider value={monitor.settingsChanges}>
+        <Dashboard monitor={monitor} />
+      </SettingsChangesProvider>
+    </I18nProvider>
+  );
+}
+
+function Dashboard({ monitor }: { monitor: ReturnType<typeof useMonitor> }) {
+  const { locale, t } = useI18n();
   const [provider, setProvider] = useState<Provider | "all">("all");
   const [accountId, setAccountId] = useState("all");
   const [search, setSearch] = useState("");
-  const [displaySettings, setDisplaySettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("connections");
+  const [settingsVisited, setSettingsVisited] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const openSettings = (tab?: SettingsTab) => {
+    if (tab) setSettingsTab(tab);
+    setSettingsVisited(true);
+    setSettingsOpen(true);
+  };
   const [, tick] = useState(0);
   useEffect(() => {
     const timer = window.setInterval(() => tick((value) => value + 1), 15_000);
@@ -52,7 +72,7 @@ export default function App() {
     error,
     setError,
     refresh,
-    save,
+    change,
     reload,
     loadMore,
     loadingMore,
@@ -62,10 +82,10 @@ export default function App() {
       <main className="boot">
         <img className="boot-logo" src="/crowline.png" alt="" />
         <h1>crowline</h1>
-        <p>{error ?? "연결 상태를 확인하고 있습니다…"}</p>
+        <p>{error ?? t("boot.checking")}</p>
         {error ? (
           <button className="button" onClick={() => void refresh()}>
-            다시 시도
+            {t("common.retry")}
           </button>
         ) : (
           <LoaderCircle className="spin" size={22} />
@@ -111,27 +131,24 @@ export default function App() {
           onClick={(event) => {
             event.preventDefault();
             setProvider("all");
-            setDisplaySettings(false);
+            setSettingsOpen(false);
           }}
         >
           <span className="brand-mark">
             <img src="/crowline.png" alt="" />
           </span>
-          <span>
-            crowline<small>DEPLOYMENT MONITOR</small>
-          </span>
+          <span>crowline</span>
         </a>
-        <p className="nav-label">모니터링</p>
-        <nav aria-label="서비스 필터">
+        <nav aria-label={t("nav.serviceFilter")}>
           <button
-            className={`nav-item ${!displaySettings && provider === "all" ? "selected" : ""}`}
+            className={`nav-item ${!settingsOpen && provider === "all" ? "selected" : ""}`}
             onClick={() => {
               setProvider("all");
-              setDisplaySettings(false);
+              setSettingsOpen(false);
             }}
           >
             <ActivityIcon size={17} />
-            전체 서비스
+            {t("nav.allServices")}
             <span className="nav-count">
               {snapshot.settings.targets.length}
             </span>
@@ -143,10 +160,10 @@ export default function App() {
           ).map((item) => (
             <button
               key={item}
-              className={`nav-item ${!displaySettings && provider === item ? "selected" : ""}`}
+              className={`nav-item ${!settingsOpen && provider === item ? "selected" : ""}`}
               onClick={() => {
                 setProvider(item);
-                setDisplaySettings(false);
+                setSettingsOpen(false);
               }}
             >
               <ProviderIcon provider={item} />
@@ -163,58 +180,43 @@ export default function App() {
         </nav>
         <div className="sidebar-bottom">
           <button
-            className={`nav-item ${displaySettings ? "selected" : ""}`}
-            onClick={() => setDisplaySettings(true)}
+            className={`nav-item ${settingsOpen ? "selected" : ""}`}
+            onClick={() => openSettings()}
           >
             <Settings2 size={17} />
-            상태바 표시 설정
+            {settingsCopy(locale, "title")}
           </button>
-          <button
-            className="nav-item settings-nav"
-            onClick={() => setSettingsOpen(true)}
-          >
-            <Settings2 size={17} />
-            연결 및 설정
-            <ChevronRight size={15} />
-          </button>
-          <div className="privacy-note">
-            <ShieldCheck size={15} />
-            <span>로컬 CLI 인증을 이 기기에서만 사용</span>
-          </div>
-          <div className="version">
-            crowline <span>v0.1.0</span>
-          </div>
         </div>
       </aside>
       <main className="main-content">
-        {displaySettings ? (
-          <PanelPreferences
-            settings={snapshot.settings}
-            busy={busy}
-            error={error}
-            onSave={save}
-          />
-        ) : (
+        {settingsVisited && (
+          <div hidden={!settingsOpen}>
+            <SettingsPage
+              tab={settingsTab}
+              onTabChange={setSettingsTab}
+              snapshot={snapshot}
+              busy={busy}
+              error={error}
+              onRefresh={refresh}
+              onReload={reload}
+            />
+          </div>
+        )}
+        {!settingsOpen && (
           <>
             {isPreview && (
               <div className="preview-banner">
                 <Radio size={14} />
-                <span>
-                  화면 미리보기 · 가상 데이터입니다. 실제 연결은 데스크톱 앱에서
-                  사용할 수 있어요.
-                </span>
+                <span>{t("dashboard.preview")}</span>
               </div>
             )}
             <header className="main-header">
               <div>
-                <div className="eyebrow">
-                  <span className="live-dot" />
-                  연결된 프로젝트
-                </div>
                 <h1>
-                  {provider === "all" ? "배포 현황" : PROVIDER_NAMES[provider]}
+                  {provider === "all"
+                    ? t("dashboard.title")
+                    : PROVIDER_NAMES[provider]}
                 </h1>
-                <p>선택한 계정의 실행 상태와 최근 배포를 확인하세요.</p>
               </div>
               <button
                 className="button refresh-button"
@@ -222,18 +224,19 @@ export default function App() {
                 onClick={() => void refresh()}
               >
                 <RefreshCw size={15} className={refreshing ? "spin" : ""} />
-                새로고침
+                {t("common.refresh")}
               </button>
             </header>
+            <UpdateNotice settings={snapshot.settings} />
             <div className="summary-grid">
               <div className="summary-card active-summary">
                 <span>
                   <CircleDot size={16} />
-                  진행 중
+                  {t("dashboard.active")}
                 </span>
                 <div>
                   <strong>{active.length}</strong>
-                  <small>실행</small>
+                  <small>{t("dashboard.runs")}</small>
                   <span className="summary-pulse">
                     <i />
                     <i />
@@ -246,23 +249,27 @@ export default function App() {
               <div className="summary-card">
                 <span>
                   <CheckCheck size={16} />
-                  최근 종료
+                  {t("dashboard.completed")}
                 </span>
                 <div>
                   <strong>{completed.length}</strong>
                   <small>
-                    지난{" "}
-                    {snapshot.settings.historyHours === 24 ? "24시간" : "7일"}
+                    {t("dashboard.elapsedPeriod", {
+                      period:
+                        snapshot.settings.historyHours === 24
+                          ? t("common.period24h")
+                          : t("common.period7d"),
+                    })}
                   </small>
                 </div>
               </div>
               <button
                 className="summary-card connection-summary"
-                onClick={() => setSettingsOpen(true)}
+                onClick={() => openSettings("connections")}
               >
                 <span>
                   <Radio size={16} />
-                  서비스 연결
+                  {t("dashboard.connections")}
                   <ArrowUpRight size={15} />
                 </span>
                 <div>
@@ -271,30 +278,32 @@ export default function App() {
                     <em>/ {snapshot.settings.accounts.length}</em>
                   </strong>
                   <small>
-                    {snapshot.settings.targets.length}개 대상 모니터링
+                    {t("dashboard.monitoringTargets", {
+                      count: snapshot.settings.targets.length,
+                    })}
                   </small>
                 </div>
               </button>
             </div>
             <div className="toolbar">
-              <div className="segmented" role="group" aria-label="실행자 범위">
+              <div
+                className="segmented"
+                role="group"
+                aria-label={t("dashboard.actorScope")}
+              >
                 <button
                   aria-pressed={snapshot.settings.scope === "mine"}
                   disabled={busy}
-                  onClick={() =>
-                    void save({ ...snapshot.settings, scope: "mine" })
-                  }
+                  onClick={() => void change({ kind: "scope", value: "mine" })}
                 >
-                  내 실행만
+                  {t("dashboard.mineOnly")}
                 </button>
                 <button
                   aria-pressed={snapshot.settings.scope === "all"}
                   disabled={busy}
-                  onClick={() =>
-                    void save({ ...snapshot.settings, scope: "all" })
-                  }
+                  onClick={() => void change({ kind: "scope", value: "all" })}
                 >
-                  전체 실행
+                  {t("dashboard.allRuns")}
                 </button>
               </div>
               <label className="search-box">
@@ -302,13 +311,13 @@ export default function App() {
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="실행명, 프로젝트, 브랜치 검색"
-                  aria-label="실행 검색"
+                  placeholder={t("dashboard.searchPlaceholder")}
+                  aria-label={t("dashboard.search")}
                 />
                 {search && (
                   <button
                     className="clear-search"
-                    aria-label="검색 지우기"
+                    aria-label={t("dashboard.clearSearch")}
                     onClick={() => setSearch("")}
                   >
                     <X size={13} />
@@ -324,56 +333,51 @@ export default function App() {
               />
               <select
                 className="period-select"
-                aria-label="조회 기간"
+                aria-label={t("dashboard.period")}
                 value={snapshot.settings.historyHours}
                 disabled={busy}
                 onChange={(event) =>
-                  void save({
-                    ...snapshot.settings,
-                    historyHours: event.target.value === "168" ? 168 : 24,
+                  void change({
+                    kind: "historyHours",
+                    value: event.target.value === "168" ? 168 : 24,
                   }).then((saved) => {
                     if (saved) void refresh();
                   })
                 }
               >
-                <option value={24}>최근 24시간</option>
-                <option value={168}>최근 7일</option>
+                <option value={24}>{t("common.period24h")}</option>
+                <option value={168}>{t("common.period7d")}</option>
               </select>
             </div>
+            <SettingFeedback changeKey="scope" />
+            <SettingFeedback changeKey="historyHours" />
             <div className="scope-description">
-              {snapshot.settings.scope === "mine"
-                ? "내 push · PR · 수동 실행 · 재실행"
-                : "내 계정이 접근할 수 있는 모든 실행"}
               {unknown > 0 && snapshot.settings.scope === "mine" && (
                 <button
                   disabled={busy}
-                  onClick={() =>
-                    void save({ ...snapshot.settings, scope: "all" })
-                  }
+                  onClick={() => void change({ kind: "scope", value: "all" })}
                 >
-                  실행자 미확인 {unknown}건은 전체에서 확인{" "}
+                  {t("dashboard.unknownActors", { count: unknown })}{" "}
                   <ChevronRight size={12} />
                 </button>
               )}
             </div>
             <details className="dashboard-guide">
-              <summary>표시 기준 안내</summary>
+              <summary>{t("dashboard.guideTitle")}</summary>
               <div>
-                <p>
-                  진행 중은 시작 후 24시간 이내 항목, 최근 종료는 선택한 기간의
-                  결과입니다. 더 오래된 결과는 ‘이전 배포 더 보기’에서 대상별로
-                  불러옵니다.
-                </p>
-                <p>
-                  ‘상태바 표시 설정’은 트레이에 보일 항목만 바꾸고, ‘연결 및
-                  설정’은 대시보드가 감시할 계정과 대상을 바꿉니다.
-                </p>
+                <p>{t("dashboard.guideHistory")}</p>
+                <p>{t("dashboard.guideSettings")}</p>
               </div>
             </details>
+            <ServiceHealth
+              snapshot={snapshot}
+              onConnect={() => openSettings("connections")}
+            />
             {snapshot.pendingTargets.length > 0 && (
               <div className="notice" role="status">
-                최근 결과부터 표시합니다. {snapshot.pendingTargets.length}개
-                대상의 진행 상태를 확인하고 있습니다.
+                {t("dashboard.pending", {
+                  count: snapshot.pendingTargets.length,
+                })}
               </div>
             )}
             {error && (
@@ -382,7 +386,7 @@ export default function App() {
                 <span>{error}</span>
                 <button
                   className="icon-button"
-                  aria-label="오류 알림 닫기"
+                  aria-label={t("dashboard.dismissError")}
                   onClick={() => setError(null)}
                 >
                   <X size={14} />
@@ -407,41 +411,35 @@ export default function App() {
                 <span className="empty-orbit">
                   <Radio size={37} />
                 </span>
-                <span className="eyebrow">READY WHEN YOU ARE</span>
-                <h2>첫 번째 연결을 추가해 보세요</h2>
-                <p>
-                  이 기기의 GitHub·Vercel CLI 로그인과 AWS 프로필을 사용해
-                  <br />
-                  진행 중인 실행과 최근 배포를 모아 보여드립니다.
-                </p>
+                <h2>{t("dashboard.onboardingTitle")}</h2>
+                <p>{t("dashboard.onboardingBody")}</p>
                 <button
                   className="button primary"
-                  onClick={() => setSettingsOpen(true)}
+                  onClick={() => openSettings("connections")}
                 >
                   <Plus size={16} />
-                  서비스 연결하기
+                  {t("dashboard.connectService")}
                 </button>
-                <small>
-                  연결 확인 → 대상 선택 → 저장 순서로 시작할 수 있어요.
-                </small>
+                <small>{t("dashboard.onboardingSteps")}</small>
               </div>
             ) : (
               <>
                 <ActivityList
-                  title="진행 중"
+                  title={t("dashboard.active")}
+                  compactEmpty
                   activities={active}
-                  empty="현재 조건에 해당하는 진행 중인 실행이 없습니다."
+                  empty={t("dashboard.activeEmpty")}
                   onError={setError}
                 />
                 <ActivityList
-                  title="최근 종료"
+                  title={t("dashboard.completed")}
                   activities={completed}
-                  empty="현재 조건에 해당하는 최근 실행이 없습니다."
+                  empty={t("dashboard.completedEmpty")}
                   onError={setError}
                 />
                 {unresolved.length > 0 && (
                   <ActivityList
-                    title="상태 확인 필요"
+                    title={t("dashboard.needsAttention")}
                     activities={unresolved}
                     empty=""
                     onError={setError}
@@ -462,25 +460,21 @@ export default function App() {
                   className={`live-dot ${snapshot.issues.length ? "amber" : ""}`}
                 />
                 {refreshing
-                  ? "최신 상태 확인 중…"
+                  ? t("dashboard.refreshing")
                   : snapshot.lastUpdatedAt
-                    ? `${timeAgo(snapshot.lastUpdatedAt)} 조회`
-                    : "아직 조회하지 않았습니다"}
+                    ? t("dashboard.lastChecked", {
+                        time: formatRelativeTime(
+                          snapshot.lastUpdatedAt,
+                          locale,
+                        ),
+                      })
+                    : t("dashboard.neverUpdated")}
               </span>
-              <span>실행 중 30초 · 대기 시 2분마다 갱신</span>
+              <span>{t("dashboard.refreshCadence")}</span>
             </footer>
           </>
         )}
       </main>
-      {settingsOpen && (
-        <Connections
-          snapshot={snapshot}
-          onClose={() => setSettingsOpen(false)}
-          onSave={save}
-          onRefresh={refresh}
-          onReload={reload}
-        />
-      )}
     </div>
   );
 }

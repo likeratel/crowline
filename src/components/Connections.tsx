@@ -1,12 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import {
-  AlertCircle,
-  ArrowUpRight,
-  Check,
-  LoaderCircle,
-  Search,
-  X,
-} from "lucide-react";
+import { AlertCircle, ArrowUpRight, LoaderCircle, Search } from "lucide-react";
 import { bridge, errorMessage } from "../bridge";
 import {
   PROVIDERS,
@@ -16,28 +9,33 @@ import {
   type Discovery,
   type LoginStatus,
   type Provider,
-  type Settings,
   type Snapshot,
   type Target,
 } from "../domain";
 import { ProviderIcon } from "./ProviderIcon";
 import { AccountPicker } from "./AccountPicker";
 import { getPlatformDetails } from "../platformDetails";
-import { selectedTargets, type TargetChanges } from "../targetSelection";
+import { useSettingsChanges } from "../settingsChangesContext";
+import { SettingFeedback } from "./SettingFeedback";
+import { accountDisplayName } from "../accountNames";
+import { useI18n } from "../i18n";
+import { settingsCopy } from "../settingsCopy";
 interface Props {
   snapshot: Snapshot;
-  onClose: () => void;
-  onSave: (settings: Settings) => Promise<boolean>;
+  saving?: boolean;
+  onBusyChange?: (busy: boolean) => void;
   onRefresh: () => Promise<void>;
   onReload?: () => Promise<void>;
 }
 export function Connections({
   snapshot,
-  onClose,
-  onSave,
+  saving = false,
+  onBusyChange,
   onRefresh,
   onReload,
 }: Props) {
+  const { locale, t } = useI18n();
+  const { change } = useSettingsChanges();
   const [provider, setProvider] = useState<Provider>("github");
   const [connectionId, setConnectionId] = useState(
     snapshot.settings.accounts.find((account) => account.provider === "github")
@@ -47,23 +45,42 @@ export function Connections({
   const [results, setResults] = useState<Partial<Record<string, Discovery>>>(
     {},
   );
-  const [targetChanges, setTargetChanges] = useState<TargetChanges>({});
-  const selected = selectedTargets(snapshot.settings, targetChanges);
+  const selected = snapshot.settings.targets;
+  const [knownTargets, setKnownTargets] = useState(snapshot.settings.targets);
+  useEffect(() => {
+    setKnownTargets((previous) => {
+      const retained = previous.filter((target) =>
+        snapshot.settings.accounts.some(
+          (account) => account.id === target.connectionId,
+        ),
+      );
+      return [
+        ...retained.filter(
+          (target) =>
+            !snapshot.settings.targets.some(
+              (item) => targetKey(item) === targetKey(target),
+            ),
+        ),
+        ...snapshot.settings.targets,
+      ];
+    });
+  }, [snapshot.settings.targets, snapshot.settings.accounts]);
   const [region, setRegion] = useState("ap-northeast-2");
   const [search, setSearch] = useState("");
   const [providerSearch, setProviderSearch] = useState("");
   const [busy, setBusy] = useState(false);
+  const working = busy || saving;
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
   const [error, setError] = useState<string | null>(null);
   const [logins, setLogins] = useState<Partial<Record<string, LoginStatus>>>(
     {},
   );
   const login = logins[connectionId];
-  const details = getPlatformDetails(provider);
+  const details = getPlatformDetails(provider, locale);
   const reload = onReload ?? onRefresh;
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    dialog.current?.showModal();
-  }, []);
+  const dialog = useRef<HTMLElement>(null);
   useEffect(() => {
     if (login?.state !== "waiting") return;
     let active = true;
@@ -130,7 +147,7 @@ export function Connections({
         );
       } catch (cause) {
         setError(
-          `연결은 추가했지만 대상을 확인하지 못했습니다. ${errorMessage(cause)}`,
+          t("connections.addedDiscoveryFailed", { error: errorMessage(cause) }),
         );
       }
       return true;
@@ -141,7 +158,7 @@ export function Connections({
       setBusy(false);
     }
   };
-  const removeAccount = async () => {
+  const removeAccount = async (): Promise<boolean> => {
     setBusy(true);
     setError(null);
     try {
@@ -156,19 +173,14 @@ export function Connections({
           Object.entries(previous).filter(([id]) => id !== connectionId),
         ),
       );
-      setTargetChanges((previous) =>
-        Object.fromEntries(
-          Object.entries(previous).filter(
-            ([, change]) => change.target.connectionId !== connectionId,
-          ),
-        ),
-      );
       setConnectionId(
         saved.accounts.find((item) => item.provider === provider)?.id ?? "",
       );
       await reload();
+      return true;
     } catch (cause) {
       setError(errorMessage(cause));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -218,33 +230,22 @@ export function Connections({
       setBusy(false);
     }
   };
-  const save = async () => {
-    setBusy(true);
-    if (await onSave({ ...snapshot.settings, targets: selected })) {
-      onClose();
-      void onRefresh();
-    } else {
-      setError("설정을 저장하지 못했습니다. 다시 시도해 주세요.");
-      setBusy(false);
-    }
+  const toggle = (target: Target) => {
+    void change({
+      kind: "target",
+      target,
+      selected: !selected.some((item) => targetKey(item) === targetKey(target)),
+    }).then((saved) => {
+      if (saved) void onRefresh();
+    });
   };
-  const toggle = (target: Target) =>
-    setTargetChanges((previous) => ({
-      ...previous,
-      [targetKey(target)]: {
-        target,
-        selected: !selected.some(
-          (item) => targetKey(item) === targetKey(target),
-        ),
-      },
-    }));
   const result = results[connectionId];
   const connection =
     result?.connection ??
     snapshot.connections.find((item) => item.connectionId === connectionId);
   const mergedTargets = [
     ...(result?.targets ?? []),
-    ...[...snapshot.settings.targets, ...selected].filter(
+    ...knownTargets.filter(
       (target) =>
         target.connectionId === connectionId &&
         !result?.targets.some((item) => targetKey(item) === targetKey(target)),
@@ -309,47 +310,30 @@ export function Connections({
   };
   const canConnect = Boolean(account) && !details.unsupportedMessage;
   return (
-    <dialog
+    <section
       ref={dialog}
-      className="connections-dialog"
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
-      aria-labelledby="connections-title"
+      className="connections-settings"
+      aria-label={t("connections.title")}
     >
-      <div className="dialog-header">
-        <div>
-          <h2 id="connections-title">서비스 연결</h2>
-          <p>이 기기의 기존 인증을 읽기 전용으로 사용합니다.</p>
-        </div>
-        <button
-          className="icon-button"
-          aria-label="설정 닫기"
-          onClick={onClose}
-        >
-          <X size={20} />
-        </button>
-      </div>
       <div
         className="dialog-body"
         tabIndex={0}
-        aria-label="서비스 연결 설정 내용"
+        aria-label={t("connections.content")}
       >
         <div className="provider-catalog">
           <label className="search-box provider-search">
             <Search size={15} />
             <input
-              aria-label="플랫폼 검색"
+              aria-label={t("connections.searchPlatform")}
               value={providerSearch}
-              placeholder="플랫폼 검색"
+              placeholder={t("connections.searchPlatform")}
               onChange={(event) => setProviderSearch(event.target.value)}
             />
           </label>
           <div
             className="provider-tabs"
             role="tablist"
-            aria-label="연결 서비스"
+            aria-label={t("connections.services")}
           >
             {catalog.map((item) => (
               <button
@@ -359,7 +343,7 @@ export function Connections({
                 aria-controls="connection-provider-panel"
                 aria-selected={provider === item}
                 tabIndex={activeCatalogProvider === item ? 0 : -1}
-                disabled={busy}
+                disabled={working}
                 onClick={() => selectProvider(item)}
                 onKeyDown={(event) => handleProviderKeyDown(event, item)}
               >
@@ -369,7 +353,7 @@ export function Connections({
             ))}
             {catalog.length === 0 && (
               <p className="catalog-empty" role="status">
-                일치하는 플랫폼이 없습니다.
+                {t("connections.noPlatforms")}
               </p>
             )}
           </div>
@@ -378,91 +362,33 @@ export function Connections({
           id="connection-provider-panel"
           className="connection-provider-panel"
           role="tabpanel"
-          aria-label={`${PROVIDER_NAMES[provider]} 연결 설정`}
+          aria-label={t("connections.providerSettings", {
+            provider: PROVIDER_NAMES[provider],
+          })}
         >
-          {!details.unsupportedMessage && (
-            <section
-              className="connection-guide"
-              aria-labelledby="connection-guide-title"
-            >
-              <h3 id="connection-guide-title">연결 순서</h3>
-              <ol>
-                <li>
-                  <span>1</span>
-                  <div>
-                    <strong>연결 준비</strong>
-                    <p>
-                      {connection?.status === "connected" && account ? (
-                        <>
-                          현재 선택한 ‘{account.label}’ 연결의 기존 인증을
-                          재사용합니다. 다시 로그인할 필요가 없습니다.
-                        </>
-                      ) : provider === "aws" ? (
-                        account ? (
-                          <>
-                            선택한 ‘{account.profile ?? account.label}’ 프로필과
-                            리전을 확인한 뒤 앱의 ‘SSO 로그인’을 사용하세요.
-                            터미널에서 직접 로그인할 때는{" "}
-                            <code>aws sso login --profile &lt;프로필&gt;</code>
-                            을 실행합니다.
-                          </>
-                        ) : (
-                          <>기존 AWS 프로필을 불러오거나 추가해 주세요.</>
-                        )
-                      ) : account?.mode === "isolated" ? (
-                        <>
-                          앱의 ‘브라우저로 로그인’을 사용해 이 연결만
-                          인증하세요. 기존 {PROVIDER_NAMES[provider]} CLI 기본
-                          세션은 바뀌지 않습니다.
-                        </>
-                      ) : account && details.cliCommand ? (
-                        <>
-                          선택한 기존 CLI 연결을 사용합니다. 세션이 없거나
-                          만료됐을 때만 터미널에서{" "}
-                          <code>{details.cliCommand}</code>을 실행하세요.
-                        </>
-                      ) : details.cliCommand ? (
-                        <>
-                          터미널에서 <code>{details.cliCommand}</code>을 완료한
-                          뒤 ‘CLI 세션 연결’을 선택하세요.
-                        </>
-                      ) : (
-                        details.connectionSummary
-                      )}
-                    </p>
-                  </div>
-                </li>
-                <li>
-                  <span>2</span>
-                  <div>
-                    <strong>연결 확인</strong>
-                    <p>선택한 연결로 조회 가능한 대상을 불러옵니다.</p>
-                  </div>
-                </li>
-                <li>
-                  <span>3</span>
-                  <div>
-                    <strong>대상 선택 및 저장</strong>
-                    <p>모니터링할 대상만 선택해 설정을 저장하세요.</p>
-                  </div>
-                </li>
-              </ol>
-              <p className="read-only-note">
-                Crowline은 배포 상태만 조회하며 배포를 변경하지 않습니다.
-              </p>
-            </section>
-          )}
           <AccountPicker
             key={provider}
             provider={provider}
             accounts={accounts}
+            settings={snapshot.settings}
+            connections={snapshot.connections.map((item) =>
+              item.connectionId === connectionId && result?.connection
+                ? result.connection
+                : item,
+            )}
+            discoveredConnection={result?.connection}
             selectedId={connectionId}
-            busy={busy}
+            busy={working}
             profiles={awsProfiles}
             onSelect={selectAccount}
             onCreate={createAccount}
             onRemove={removeAccount}
             onLoadProfiles={loadProfiles}
+            savedTargetCount={
+              snapshot.settings.targets.filter(
+                (target) => target.connectionId === connectionId,
+              ).length
+            }
           />
           {!details.unsupportedMessage && (
             <>
@@ -473,24 +399,47 @@ export function Connections({
                 />
                 <div>
                   <strong>
-                    {connection?.account ?? "연결을 확인해 주세요"}
+                    {account
+                      ? accountDisplayName(
+                          account,
+                          snapshot.settings,
+                          connection ? [connection] : [],
+                        )
+                      : t("connections.checkConnection")}
                   </strong>
-                  <p>
-                    {connection?.message ??
-                      (connection?.status === "connected"
-                        ? "기존 인증을 사용합니다. 토큰 입력이 필요하지 않아요."
-                        : "아래 버튼으로 로그인과 조회 가능한 대상을 확인하세요.")}
-                  </p>
+                  {connection?.status !== "connected" &&
+                    connection?.message && <p>{connection.message}</p>}
                 </div>
               </div>
+              <details className="connection-help">
+                <summary>{settingsCopy(locale, "connectionHelp")}</summary>
+                <p>
+                  {provider === "aws"
+                    ? account
+                      ? t("connections.awsSelected", {
+                          profile: account.profile ?? account.label,
+                          command: "aws sso login --profile <profile>",
+                        })
+                      : t("connections.awsAdd")
+                    : account?.mode === "isolated"
+                      ? t("connections.appLogin", {
+                          provider: PROVIDER_NAMES[provider],
+                        })
+                      : details.cliCommand
+                        ? t("connections.completeCli", {
+                            command: details.cliCommand,
+                          })
+                        : details.connectionSummary}
+                </p>
+              </details>
               {provider === "aws" && account && (
                 <div className="aws-fields">
                   <label>
-                    프로필
+                    {t("connections.profile")}
                     <input value={account.profile ?? ""} readOnly />
                   </label>
                   <label>
-                    리전
+                    {t("connections.region")}
                     <input
                       value={region}
                       onChange={(event) => setRegion(event.target.value)}
@@ -510,7 +459,7 @@ export function Connections({
                   ) : (
                     <Search size={15} />
                   )}
-                  연결 및 대상 확인
+                  {t("connections.verifyTargets")}
                 </button>
                 {details.canStartAppLogin && (
                   <button
@@ -523,7 +472,9 @@ export function Connections({
                         login.state === "waiting")
                     }
                   >
-                    {provider === "aws" ? "SSO 로그인" : "브라우저로 로그인"}
+                    {provider === "aws"
+                      ? t("connections.ssoLogin")
+                      : t("connections.browserLogin")}
                     <ArrowUpRight size={14} />
                   </button>
                 )}
@@ -548,7 +499,7 @@ export function Connections({
                           )
                       }
                     >
-                      인증 페이지 열기 <ArrowUpRight size={13} />
+                      {t("connections.openAuth")} <ArrowUpRight size={13} />
                     </button>
                   )}
                   {login.state === "complete" && (
@@ -556,7 +507,7 @@ export function Connections({
                       className="text-button"
                       onClick={() => void discover()}
                     >
-                      조회 대상 불러오기
+                      {t("connections.loadTargets")}
                     </button>
                   )}
                 </div>
@@ -572,24 +523,23 @@ export function Connections({
               ))}
               <div className="target-heading">
                 <h3>
-                  모니터링 대상 <span>{uniqueTargets.length}</span>
+                  {t("connections.targets")} <span>{uniqueTargets.length}</span>
                 </h3>
                 <span>
-                  {
-                    selected.filter(
+                  {t("common.selectedCount", {
+                    count: selected.filter(
                       (target) => target.connectionId === connectionId,
-                    ).length
-                  }
-                  개 선택
+                    ).length,
+                  })}
                 </span>
               </div>
               {mergedTargets.length > 0 && (
                 <label className="search-box target-search">
                   <Search size={15} />
                   <input
-                    aria-label="대상 검색"
+                    aria-label={t("connections.searchTargets")}
                     value={search}
-                    placeholder="이름으로 검색"
+                    placeholder={t("connections.searchByName")}
                     onChange={(event) => setSearch(event.target.value)}
                   />
                 </label>
@@ -600,6 +550,7 @@ export function Connections({
                     <label key={targetKey(target)} className="target-option">
                       <input
                         type="checkbox"
+                        disabled={working}
                         checked={selected.some(
                           (item) => targetKey(item) === targetKey(target),
                         )}
@@ -607,26 +558,25 @@ export function Connections({
                       />
                       <div>
                         <strong>{target.name}</strong>
-                        <span>
-                          {target.description ||
-                            PROVIDER_NAMES[target.provider]}
-                        </span>
+                        {target.description && (
+                          <span>{target.description}</span>
+                        )}
+                        <SettingFeedback
+                          changeKey={`target:${targetKey(target)}`}
+                        />
                       </div>
                     </label>
                   ))
                 ) : (
                   <p className="targets-empty">
                     {result
-                      ? "조회할 수 있는 대상이 없습니다. 계정·권한·리전을 확인해 주세요."
-                      : "연결을 확인하면 선택할 수 있는 대상이 여기에 표시됩니다."}
+                      ? t("connections.noTargets")
+                      : t("connections.verifyFirst")}
                   </p>
                 )}
               </div>
               {!details.supportsActorAttribution && (
-                <p className="field-help">
-                  실행자 정보가 확인되지 않을 수 있습니다. “내 실행”에서 보이지
-                  않는 항목은 전체 실행에서 확인해 주세요.
-                </p>
+                <p className="field-help">{t("connections.actorHelp")}</p>
               )}
             </>
           )}
@@ -638,17 +588,6 @@ export function Connections({
           )}
         </section>
       </div>
-      <div className="dialog-footer">
-        <span>총 {selected.length}개 대상</span>
-        <button
-          className="button primary"
-          disabled={busy}
-          onClick={() => void save()}
-        >
-          <Check size={16} />
-          설정 저장
-        </button>
-      </div>
-    </dialog>
+    </section>
   );
 }

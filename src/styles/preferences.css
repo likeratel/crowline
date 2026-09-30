@@ -1,11 +1,17 @@
 .panel-preferences {
   max-width: 760px;
 }
-.preferences-note,
+.preferences-help,
 .panel-preferences fieldset p {
   color: #969ba6;
   font-size: 12px;
   line-height: 1.7;
+}
+.preferences-help {
+  margin-bottom: var(--space-4);
+}
+.preferences-help summary {
+  cursor: pointer;
 }
 .panel-preferences fieldset {
   margin: var(--space-6) 0;
@@ -37,10 +43,101 @@
   color: #969ba6;
   margin-top: 4px;
 }
-.preferences-save {
+.preference-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.preference-control > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.preferences-about {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font-size: 12px;
+}
+.preferences-about strong {
+  color: var(--text);
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 12px;
+}
+.settings-field select {
+  min-height: var(--control-height);
+  min-width: 0;
+}
+.notification-project {
+  border-top: 1px solid var(--border);
+  padding-block: var(--space-4);
+}
+.notification-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+  padding-left: var(--space-6);
+}
+.notification-outcomes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.project-priority-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--space-3);
+  gap: var(--space-2);
+  padding-block: var(--space-2);
+}
+.project-priority-row > span {
+  flex: 1;
+  min-width: 120px;
+  overflow-wrap: anywhere;
+}
+.project-priority-row small {
+  display: block;
   font-size: 12px;
+  color: var(--muted);
+}
+.service-health {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: var(--space-3);
+  margin-block: var(--space-4);
+  font-size: 12px;
+}
+.service-health summary {
+  cursor: pointer;
+  min-height: var(--control-compact);
+}
+.service-health-row {
+  padding-block: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.service-health-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.service-health-title strong {
+  flex: 1;
+}
+.service-health-row p {
+  color: var(--muted);
+  margin-block: var(--space-2);
+  overflow-wrap: anywhere;
 }

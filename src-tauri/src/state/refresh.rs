@@ -235,7 +235,45 @@ impl AppState {
             return;
         }
         let current = self.snapshot().await;
-        let updated = apply_page(current, target, result, kind, epoch);
+        let observed_at = Utc::now();
+        let notifications = if kind != PageKind::History {
+            match &result {
+                Ok(page) if page.issues.is_empty() || !page.activities.is_empty() => {
+                    self.notification_engine.lock().await.observe(
+                        target,
+                        &page.activities,
+                        &current.settings.preferences,
+                        epoch,
+                        observed_at,
+                    )
+                }
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        let mut updated = apply_page(current, target, result, kind, epoch);
+        for delivery in notifications {
+            if let Err(message) = publisher.publish_notification(&delivery.notification) {
+                self.notification_engine
+                    .lock()
+                    .await
+                    .mark_failed(&delivery, epoch);
+                updated.issues.retain(|issue| {
+                    issue.connection_id.as_deref() != Some(&target.connection_id)
+                        || issue.target_id.as_deref() != Some(&target.id)
+                        || !issue.message.starts_with("Notification:")
+                });
+                updated.issues.push(Issue {
+                    provider: target.provider,
+                    connection_id: Some(target.connection_id.clone()),
+                    target_id: Some(target.id.clone()),
+                    message: format!("Notification: {message}"),
+                });
+            } else {
+                self.notification_engine.lock().await.acknowledge(&delivery);
+            }
+        }
         self.emit(updated, publisher).await;
     }
 

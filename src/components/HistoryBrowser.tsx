@@ -1,3 +1,4 @@
+import { accountDisplayName } from "../accountNames";
 import { useState } from "react";
 import {
   targetKey,
@@ -6,6 +7,7 @@ import {
   type Snapshot,
   type TargetHistory,
 } from "../domain";
+import { useI18n } from "../i18n";
 
 type Props = {
   snapshot: Snapshot;
@@ -21,6 +23,7 @@ export function HistoryBrowser({
   loading,
   onLoad,
 }: Props) {
+  const { t } = useI18n();
   const [selected, setSelected] = useState("");
   const targets = snapshot.settings.targets.filter(
     (target) =>
@@ -38,31 +41,31 @@ export function HistoryBrowser({
     );
   if (!targets.length) return null;
   return (
-    <section className="history-browser" aria-label="이전 배포 조회">
-      <div>
-        <strong>최근 결과를 먼저 표시합니다</strong>
-        <p>
-          이전 이력이 필요하면 대상을 선택해 추가로 불러오세요. 조회 기간과
-          실행자 필터는 그대로 적용됩니다.
-        </p>
-      </div>
+    <section className="history-browser" aria-label={t("history.label")}>
       <label>
-        이력 조회 대상
+        {t("history.target")}
         <select
-          aria-label="이력 조회 대상"
+          aria-label={t("history.target")}
           className="period-select"
           value={target ? selected : ""}
           onChange={(event) => setSelected(event.target.value)}
         >
-          <option value="">대상 선택</option>
+          <option value="">{t("history.selectTarget")}</option>
           {targets.map((item) => (
             <option key={targetKey(item)} value={targetKey(item)}>
               {PROVIDER_NAMES[item.provider]} · {item.name} ·{" "}
-              {
-                snapshot.settings.accounts.find(
+              {(() => {
+                const account = snapshot.settings.accounts.find(
                   (account) => account.id === item.connectionId,
-                )?.label
-              }
+                );
+                return account
+                  ? accountDisplayName(
+                      account,
+                      snapshot.settings,
+                      snapshot.connections,
+                    )
+                  : "";
+              })()}
             </option>
           ))}
         </select>
@@ -74,13 +77,9 @@ export function HistoryBrowser({
           if (page) void onLoad(page);
         }}
       >
-        {loading ? "이력 불러오는 중…" : "이전 배포 더 보기"}
+        {loading ? t("history.loading") : t("history.loadMore")}
       </button>
-      {target && page && !page.nextCursor && (
-        <small>
-          이 대상의 추가 이력이 없거나 플랫폼에서 제공하는 조회 범위 끝입니다.
-        </small>
-      )}
+      {target && page && !page.nextCursor && <small>{t("history.end")}</small>}
     </section>
   );
 }

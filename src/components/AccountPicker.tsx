@@ -1,22 +1,40 @@
-import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
-import { PROVIDER_NAMES, type Account, type Provider } from "../domain";
+import { useEffect, useState } from "react";
+import { Plus, Trash2, Pencil } from "lucide-react";
+import {
+  PROVIDER_NAMES,
+  type Account,
+  type Provider,
+  type Settings,
+  type Connection,
+} from "../domain";
 import { getPlatformDetails } from "../platformDetails";
+import { useI18n } from "../i18n";
+import { accountDisplayName } from "../accountNames";
+import { AccountAliasEditor } from "./AccountAliasEditor";
+import { SettingFeedback } from "./SettingFeedback";
+import { settingsCopy } from "../settingsCopy";
 
 interface Props {
   provider: Provider;
   accounts: Account[];
+  settings: Settings;
+  connections: Connection[];
+  discoveredConnection?: Connection;
   selectedId: string;
   busy: boolean;
   profiles: string[];
   onSelect: (account: Account) => void;
   onCreate: (label: string, profile: string | null) => Promise<boolean>;
-  onRemove: () => Promise<void>;
+  onRemove: () => Promise<boolean>;
   onLoadProfiles: () => Promise<void>;
+  savedTargetCount: number;
 }
 export function AccountPicker({
   provider,
   accounts,
+  settings,
+  connections,
+  discoveredConnection,
   selectedId,
   busy,
   profiles,
@@ -24,16 +42,38 @@ export function AccountPicker({
   onCreate,
   onRemove,
   onLoadProfiles,
+  savedTargetCount,
 }: Props) {
-  const details = getPlatformDetails(provider);
+  const { locale, t } = useI18n();
+  const details = getPlatformDetails(provider, locale);
   const supportsMultipleAccounts = details.supportsMultipleAccounts;
   const [adding, setAdding] = useState(false);
+  const [editingAlias, setEditingAlias] = useState(false);
+  const identities = discoveredConnection
+    ? [
+        discoveredConnection,
+        ...connections.filter(
+          (item) => item.connectionId !== discoveredConnection.connectionId,
+        ),
+      ]
+    : connections;
+  const displayName = (account: Account) =>
+    accountDisplayName(account, settings, identities);
   const [label, setLabel] = useState("");
   const [profile, setProfile] = useState("");
+  const [pendingRemovalId, setPendingRemovalId] = useState<string | null>(null);
+  useEffect(() => {
+    setPendingRemovalId(null);
+    setEditingAlias(false);
+  }, [selectedId]);
   const add = async () => {
     if (
       await onCreate(
-        label.trim() || profile.trim() || `${PROVIDER_NAMES[provider]} 계정`,
+        label.trim() ||
+          profile.trim() ||
+          t("accountPicker.defaultAccount", {
+            provider: PROVIDER_NAMES[provider],
+          }),
         provider === "aws" ? profile.trim() : null,
       )
     ) {
@@ -43,15 +83,24 @@ export function AccountPicker({
     }
   };
   const addLocalSession = async () => {
-    if (await onCreate(`${PROVIDER_NAMES[provider]} CLI 세션`, null)) {
+    if (
+      await onCreate(
+        t("accountPicker.cliSession", { provider: PROVIDER_NAMES[provider] }),
+        null,
+      )
+    ) {
       setAdding(false);
     }
+  };
+  const selectedAccount = accounts.find((account) => account.id === selectedId);
+  const remove = async () => {
+    if (await onRemove()) setPendingRemovalId(null);
   };
 
   if (details.unsupportedMessage) {
     return (
       <div className="account-picker unsupported-connection" role="status">
-        <strong>현재 연결할 수 없습니다</strong>
+        <strong>{t("accountPicker.unavailable")}</strong>
         <p>{details.unsupportedMessage}</p>
       </div>
     );
@@ -62,30 +111,41 @@ export function AccountPicker({
       {accounts.length > 0 && (
         <div className="account-picker-row">
           <label>
-            연결할 계정
+            {t("accountPicker.choose")}
             <select
-              aria-label="연결할 계정"
+              aria-label={t("accountPicker.choose")}
               value={selectedId}
               disabled={busy}
               onChange={(event) => {
                 const account = accounts.find(
                   (item) => item.id === event.target.value,
                 );
-                if (account) onSelect(account);
+                if (account) {
+                  setPendingRemovalId(null);
+                  onSelect(account);
+                }
               }}
             >
               {accounts.map((account) => (
                 <option value={account.id} key={account.id}>
-                  {account.label}
-                  {account.profile ? ` · ${account.profile}` : ""}
+                  {displayName(account)}
                 </option>
               ))}
             </select>
           </label>
+          <button
+            className="icon-button"
+            aria-label={settingsCopy(locale, "editAlias")}
+            aria-expanded={editingAlias}
+            disabled={busy}
+            onClick={() => setEditingAlias((value) => !value)}
+          >
+            <Pencil size={14} />
+          </button>
           {supportsMultipleAccounts && (
             <button
               className="icon-button"
-              aria-label="계정 추가"
+              aria-label={t("accountPicker.add")}
               disabled={busy}
               onClick={() => setAdding(!adding)}
             >
@@ -95,46 +155,88 @@ export function AccountPicker({
           {selectedId !== "github:local" && selectedId !== "vercel:local" && (
             <button
               className="icon-button"
-              aria-label="이 계정 연결 제거"
+              aria-label={t("accountPicker.removeAria")}
               disabled={busy}
-              onClick={() => void onRemove()}
+              onClick={() => setPendingRemovalId(selectedId)}
             >
               <Trash2 size={14} />
             </button>
           )}
         </div>
       )}
+      {selectedAccount && editingAlias && (
+        <AccountAliasEditor
+          key={selectedId}
+          accountId={selectedId}
+          name={displayName(selectedAccount)}
+          disabled={busy}
+        />
+      )}
+      {selectedAccount && !editingAlias && (
+        <SettingFeedback changeKey={`accountAlias:${selectedId}`} />
+      )}
+      {pendingRemovalId === selectedId && selectedAccount && (
+        <section
+          className="account-removal-confirmation"
+          aria-labelledby="account-removal-title"
+          aria-live="polite"
+        >
+          <strong id="account-removal-title">
+            {t("accountPicker.removeTitle", {
+              label: displayName(selectedAccount),
+            })}
+          </strong>
+          <p>{t("accountPicker.removeBody", { count: savedTargetCount })}</p>
+          <div>
+            <button
+              className="button"
+              disabled={busy}
+              onClick={() => setPendingRemovalId(null)}
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              className="button danger"
+              disabled={busy}
+              onClick={() => void remove()}
+            >
+              {t("accountPicker.remove")}
+            </button>
+          </div>
+        </section>
+      )}
       {!supportsMultipleAccounts && accounts.length === 0 && (
         <div className="account-create local-session-create">
-          <strong>이 기기의 CLI 세션</strong>
-          <p>{details.connectionSummary}</p>
+          <strong>{t("accountPicker.localSession")}</strong>
           <button
             className="button"
             disabled={busy}
             onClick={() => void addLocalSession()}
           >
-            CLI 세션 연결
+            {t("accountPicker.connectCli")}
           </button>
         </div>
       )}
       {supportsMultipleAccounts && (adding || accounts.length === 0) && (
         <div className="account-create">
           <strong>
-            {provider === "aws" ? "AWS 프로필 연결" : "별도 계정 연결"}
+            {provider === "aws"
+              ? t("accountPicker.awsProfile")
+              : t("accountPicker.separateAccount")}
           </strong>
           <label>
-            계정 이름
+            {t("accountPicker.name")}
             <input
               value={label}
               onChange={(event) => setLabel(event.target.value)}
-              placeholder="개인 / 회사"
+              placeholder={t("accountPicker.namePlaceholder")}
               maxLength={80}
             />
           </label>
           {provider === "aws" && (
             <>
               <label>
-                AWS 프로필
+                {t("accountPicker.profile")}
                 <input
                   list="new-aws-profiles"
                   value={profile}
@@ -153,7 +255,7 @@ export function AccountPicker({
                 disabled={busy}
                 onClick={() => void onLoadProfiles()}
               >
-                로컬 프로필 불러오기
+                {t("accountPicker.loadProfiles")}
               </button>
             </>
           )}
@@ -162,14 +264,10 @@ export function AccountPicker({
             disabled={busy || (provider === "aws" && !profile.trim())}
             onClick={() => void add()}
           >
-            {provider === "aws" ? "프로필 연결 추가" : "계정 연결 추가"}
+            {provider === "aws"
+              ? t("accountPicker.addProfile")
+              : t("accountPicker.addAccount")}
           </button>
-          {provider !== "aws" && (
-            <p>
-              추가한 계정은 아래 로그인 버튼으로 연결합니다. 기존 CLI 계정은
-              바뀌지 않습니다.
-            </p>
-          )}
         </div>
       )}
     </div>

@@ -4,7 +4,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/?view=dashboard");
 });
 
-test("omits workspace placeholders and explains the local three-step connection flow", async ({
+test("omits workspace placeholders and keeps connection help compact", async ({
   page,
 }) => {
   await expect(page.getByText("내 워크스페이스", { exact: true })).toHaveCount(
@@ -14,37 +14,24 @@ test("omits workspace placeholders and explains the local three-step connection 
   await expect(
     page.getByText(/진행 중은 시작 후 24시간 이내 항목/),
   ).toBeVisible();
-  await expect(
-    page.getByText(/상태바 표시 설정.*트레이에 보일 항목만 바꾸고/),
-  ).toBeVisible();
+  await expect(page.getByText("연결된 프로젝트", { exact: true })).toHaveCount(
+    0,
+  );
   await page.screenshot({
     path: "artifacts/crowline-dashboard-ux.png",
     fullPage: true,
   });
 
-  await page.getByRole("button", { name: "연결 및 설정" }).click();
-  const dialog = page.getByRole("dialog", { name: "서비스 연결" });
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const connections = page.getByRole("tabpanel", { name: "서비스 연결" });
 
-  await expect(dialog.getByText("YOUR WORKSPACE", { exact: true })).toHaveCount(
-    0,
-  );
   await expect(
-    dialog.getByText("이 기기의 기존 인증을 읽기 전용으로 사용합니다."),
-  ).toBeVisible();
-  await expect(dialog.locator(".connection-guide li")).toHaveCount(3);
-  await expect(dialog.getByText("연결 준비", { exact: true })).toBeVisible();
-  await expect(dialog.getByText("연결 확인", { exact: true })).toBeVisible();
-  await expect(
-    dialog.getByText("대상 선택 및 저장", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    dialog.getByText(/기존 인증을 재사용합니다.*다시 로그인할 필요가 없습니다/),
-  ).toBeVisible();
-  await expect(
-    dialog.getByText(
-      "Crowline은 배포 상태만 조회하며 배포를 변경하지 않습니다.",
-    ),
-  ).toBeVisible();
+    connections.getByText("YOUR WORKSPACE", { exact: true }),
+  ).toHaveCount(0);
+  const help = connections.locator("details.connection-help");
+  await expect(help.locator("summary")).toHaveText("연결 방법");
+  await help.locator("summary").click();
+  await expect(help).toContainText("gh auth login");
   await page.screenshot({ path: "artifacts/crowline-dialog-guide-full.png" });
 });
 
@@ -74,59 +61,89 @@ test("uses 36px dashboard controls and a custom select indicator", async ({
   }
 });
 
-test("keeps one keyboard-scrollable dialog body with stable actions in a short viewport", async ({
+test("keeps a single scrollable settings page with reachable connection actions in a short viewport", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 760, height: 420 });
-  await page.getByRole("button", { name: "연결 및 설정" }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
 
-  const dialog = page.getByRole("dialog", { name: "서비스 연결" });
-  const body = dialog.getByLabel("서비스 연결 설정 내용");
-  const header = dialog.locator(".dialog-header");
-  const footer = dialog.locator(".dialog-footer");
-  const beforeHeader = await header.boundingBox();
-  const beforeFooter = await footer.boundingBox();
-
+  const connections = page.getByRole("tabpanel", { name: "서비스 연결" });
   await page.screenshot({ path: "artifacts/crowline-dialog-guide.png" });
 
-  await expect(body).toHaveCSS("overflow-y", "auto");
-  await expect(dialog.locator(".provider-tabs")).toHaveCSS(
+  await expect(connections.locator(".provider-tabs")).toHaveCSS(
     "overflow-y",
     "visible",
   );
   expect(
-    await dialog
+    await connections
       .locator(".provider-tabs")
       .evaluate((catalog) => catalog.scrollHeight <= catalog.clientHeight),
   ).toBe(true);
 
-  const githubTab = dialog.getByRole("tab", {
+  const githubTab = connections.getByRole("tab", {
     name: "GitHub Actions",
     exact: true,
   });
   await githubTab.focus();
   await page.keyboard.press("ArrowRight");
-  const vercelTab = dialog.getByRole("tab", { name: "Vercel", exact: true });
+  const vercelTab = connections.getByRole("tab", {
+    name: "Vercel",
+    exact: true,
+  });
   await expect(vercelTab).toBeFocused();
   await expect(vercelTab).toHaveAttribute("aria-selected", "true");
 
-  await body.focus();
-  await page.keyboard.press("End");
-  await expect
-    .poll(() => body.evaluate((element) => element.scrollTop))
-    .toBeGreaterThan(0);
-
-  const afterHeader = await header.boundingBox();
-  const afterFooter = await footer.boundingBox();
-  expect(afterHeader?.y).toBe(beforeHeader?.y);
-  expect(afterFooter?.y).toBe(beforeFooter?.y);
+  await expect(
+    connections.getByRole("button", { name: "설정 저장", exact: true }),
+  ).toHaveCount(0);
   expect(
-    (afterFooter?.y ?? 0) + (afterFooter?.height ?? 0),
-  ).toBeLessThanOrEqual(420);
-  expect(
-    await dialog.evaluate(
-      (element) => element.scrollWidth <= element.clientWidth,
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
   await page.screenshot({ path: "artifacts/crowline-dialog-short.png" });
+});
+
+test("collapses the empty active section and keeps recent rows readable", async ({
+  page,
+}) => {
+  await page.route(/\/src\/bridge\.ts(?:\?.*)?$/, async (route) => {
+    const response = await route.fetch();
+    const source = await response.text();
+    const marker = "let preview = demoSnapshot();";
+    expect(source).toContain(marker);
+    await route.fulfill({
+      response,
+      body: source.replace(
+        marker,
+        `${marker}
+      preview = { ...preview, activities: preview.activities.filter(item => item.status === "success" || item.status === "failed") };`,
+      ),
+    });
+  });
+  await page.reload();
+  const active = page.getByRole("region", { name: "진행 중", exact: true });
+  await expect(active).toHaveClass(/compact-empty/);
+  expect((await active.boundingBox())!.height).toBeLessThan(70);
+  await expect(page.locator(".activity-time").first()).toHaveCSS(
+    "font-size",
+    "12px",
+  );
+});
+
+test("shows the service catalog immediately and omits the sidebar authentication note", async ({
+  page,
+}) => {
+  await expect(
+    page.getByText("로컬 CLI 인증을 이 기기에서만 사용", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const connections = page.getByRole("tabpanel", { name: "서비스 연결" });
+  await expect(connections.getByLabel("플랫폼 검색")).toBeVisible();
+  await expect(
+    connections.getByRole("tab", { name: "Vercel", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("서비스 추가 또는 변경", { exact: true }),
+  ).toHaveCount(0);
 });

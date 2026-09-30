@@ -13,9 +13,10 @@ use crate::{
     cli::Toolchain,
     models::{
         Account, AccountMode, Activity, ActivityStatus, Connection, ConnectionStatus, Issue,
-        LoginStatus, Ownership, Provider, Scope, Settings, Snapshot, Target, LOCAL_GITHUB_ID,
-        LOCAL_VERCEL_ID,
+        LoginStatus, Ownership, Provider, Scope, Settings, SettingsChange, Snapshot, Target,
+        LOCAL_GITHUB_ID, LOCAL_VERCEL_ID,
     },
+    notifications::{NativeNotification, NotificationEngine},
     providers::aws,
     settings::SettingsStore,
 };
@@ -26,12 +27,19 @@ const ERROR_POLL_INTERVAL: Duration = Duration::from_secs(240);
 
 pub(crate) trait SnapshotPublisher {
     fn publish_snapshot(&self, snapshot: &Snapshot);
+    fn publish_notification(&self, _notification: &NativeNotification) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 impl<R: Runtime> SnapshotPublisher for AppHandle<R> {
     fn publish_snapshot(&self, snapshot: &Snapshot) {
         let _ = self.emit("snapshot-updated", snapshot.clone());
         update_tray(self, snapshot);
+    }
+
+    fn publish_notification(&self, notification: &NativeNotification) -> Result<(), String> {
+        crate::notifications::dispatch_native(self, notification)
     }
 }
 
@@ -52,6 +60,7 @@ pub struct AppState {
     settings_revision: AtomicU64,
     refresh_epoch: AtomicU64,
     history_lock: Mutex<()>,
+    notification_engine: Mutex<NotificationEngine>,
     pub login_statuses: Mutex<HashMap<String, LoginStatus>>,
 }
 
@@ -81,6 +90,7 @@ impl AppState {
             settings_revision: AtomicU64::new(0),
             refresh_epoch: AtomicU64::new(0),
             history_lock: Mutex::new(()),
+            notification_engine: Mutex::new(NotificationEngine::default()),
             login_statuses: Mutex::new(HashMap::new()),
         }
     }
@@ -135,9 +145,10 @@ impl AppState {
 
     pub async fn save_settings<P: SnapshotPublisher>(
         &self,
-        settings: Settings,
+        mut settings: Settings,
         publisher: &P,
     ) -> Result<Settings, String> {
+        settings.prune_target_references();
         settings.validate()?;
         let _publish_guard = self.publish_lock.lock().await;
         let previous = self.snapshot.read().await.clone();
@@ -148,16 +159,37 @@ impl AppState {
             .await
     }
 
+    pub async fn change_settings<P: SnapshotPublisher>(
+        &self,
+        change: SettingsChange,
+        publisher: &P,
+    ) -> Result<Settings, String> {
+        let _publish_guard = self.publish_lock.lock().await;
+        let previous = self.snapshot.read().await.clone();
+        let settings = apply_settings_change(previous.settings.clone(), change)?;
+        if settings.accounts != previous.settings.accounts {
+            return Err("Account definitions can only be changed with account commands.".into());
+        }
+        self.publish_settings_locked(settings, previous, publisher)
+            .await
+    }
+
     async fn publish_settings_locked<P: SnapshotPublisher>(
         &self,
-        settings: Settings,
+        mut settings: Settings,
         previous: Snapshot,
         publisher: &P,
     ) -> Result<Settings, String> {
+        settings.prune_target_references();
+        settings.validate()?;
         for account in &settings.accounts {
             self.tools.prepare_account(account)?;
         }
         let saved = self.store.save(settings).await?;
+        self.notification_engine
+            .lock()
+            .await
+            .sync_preferences(&saved.preferences.notifications);
         self.settings_revision.fetch_add(1, Ordering::SeqCst);
         let account_ids: HashSet<&str> = saved
             .accounts
@@ -343,6 +375,139 @@ impl AppState {
         }
         exists
     }
+}
+
+fn apply_settings_change(
+    mut settings: Settings,
+    change: SettingsChange,
+) -> Result<Settings, String> {
+    use crate::preferences::{NotificationRule, NotificationScope};
+
+    match change {
+        SettingsChange::Scope { value } => settings.scope = value,
+        SettingsChange::HistoryHours { value } => settings.history_hours = value,
+        SettingsChange::Language { value } => settings.preferences.language = value,
+        SettingsChange::AutomaticUpdates { value } => {
+            settings.preferences.check_updates_automatically = value;
+        }
+        SettingsChange::Panel { patch } => {
+            settings.panel.show_active = patch.show_active.unwrap_or(settings.panel.show_active);
+            settings.panel.show_completed = patch
+                .show_completed
+                .unwrap_or(settings.panel.show_completed);
+            settings.panel.row_limit = patch.row_limit.unwrap_or(settings.panel.row_limit);
+        }
+        SettingsChange::PanelProvider { provider, enabled } => {
+            settings.panel.providers.retain(|item| *item != provider);
+            if enabled {
+                settings.panel.providers.push(provider);
+            }
+        }
+        SettingsChange::PanelTarget {
+            target_key,
+            visible,
+        } => {
+            require_target_key(&settings, &target_key)?;
+            settings
+                .panel
+                .hidden_targets
+                .retain(|key| key != &target_key);
+            if !visible {
+                settings.panel.hidden_targets.push(target_key);
+            }
+        }
+        SettingsChange::NotificationEnabled { enabled } => {
+            settings.preferences.notifications.enabled = enabled;
+        }
+        SettingsChange::NotificationRules { rules } => {
+            let mut merged = settings.preferences.notifications.rules.clone();
+            for change in rules {
+                require_target_key(&settings, &change.target_key)?;
+                let position = merged
+                    .iter()
+                    .position(|rule| rule.target_key == change.target_key);
+                let current = position.map(|index| &merged[index]);
+                let rule = NotificationRule {
+                    target_key: change.target_key,
+                    enabled: change
+                        .enabled
+                        .or_else(|| current.map(|rule| rule.enabled))
+                        .unwrap_or(false),
+                    scope: change
+                        .scope
+                        .or_else(|| {
+                            current.map(|rule| match rule.scope {
+                                NotificationScope::Mine => Scope::Mine,
+                                NotificationScope::All => Scope::All,
+                            })
+                        })
+                        .map(|scope| match scope {
+                            Scope::Mine => NotificationScope::Mine,
+                            Scope::All => NotificationScope::All,
+                        })
+                        .unwrap_or(NotificationScope::Mine),
+                    statuses: change
+                        .statuses
+                        .or_else(|| current.map(|rule| rule.statuses.clone()))
+                        .unwrap_or_else(|| {
+                            vec![
+                                ActivityStatus::Success,
+                                ActivityStatus::Failed,
+                                ActivityStatus::Canceled,
+                            ]
+                        }),
+                };
+                if let Some(position) = position {
+                    merged[position] = rule;
+                } else {
+                    merged.push(rule);
+                }
+            }
+            settings.preferences.notifications.rules = merged;
+        }
+        SettingsChange::Target { target, selected } => {
+            let key = target.key();
+            settings.targets.retain(|item| item.key() != key);
+            if selected {
+                settings.targets.push(target);
+            }
+        }
+        SettingsChange::AccountAlias {
+            connection_id,
+            alias,
+        } => {
+            if !settings
+                .accounts
+                .iter()
+                .any(|account| account.id == connection_id)
+            {
+                return Err("The selected account does not exist.".into());
+            }
+            settings.preferences.account_aliases.remove(&connection_id);
+            if let Some(alias) = alias {
+                let alias = alias.trim();
+                if alias.is_empty() || alias.chars().count() > 80 {
+                    return Err("Account aliases must be between 1 and 80 characters.".into());
+                }
+                settings
+                    .preferences
+                    .account_aliases
+                    .insert(connection_id, alias.to_owned());
+            }
+        }
+    }
+    settings.prune_target_references();
+    settings.validate()?;
+    Ok(settings)
+}
+
+fn require_target_key(settings: &Settings, target_key: &str) -> Result<(), String> {
+    settings
+        .targets
+        .iter()
+        .any(|target| target.key() == target_key)
+        .then_some(())
+        .ok_or_else(|| "The selected target does not exist.".to_owned())
 }
 
 #[cfg(test)]

@@ -1,0 +1,209 @@
+.notification-preferences {
+  max-width: 960px;
+  min-width: 0;
+}
+.notification-master-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.notification-permission,
+.notification-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+.notification-master,
+.notification-select-all {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height);
+  white-space: nowrap;
+}
+.notification-master input,
+.notification-select-all input,
+.notification-row > input,
+.notification-custom input {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  accent-color: var(--accent);
+}
+.notification-permission {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+.notification-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, auto);
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+.notification-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  min-width: 0;
+}
+.notification-search:focus-within {
+  border-color: var(--focus);
+}
+.notification-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+}
+.notification-bulk {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--soft);
+  border-radius: var(--radius-control);
+  font-size: 12px;
+}
+.notification-bulk strong {
+  margin-right: auto;
+  white-space: nowrap;
+}
+.notification-bulk select {
+  max-width: 180px;
+}
+.notification-list {
+  margin-top: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-surface);
+  overflow: hidden;
+}
+.notification-row {
+  display: grid;
+  grid-template-columns: 20px minmax(150px, 1fr) minmax(110px, 140px) minmax(
+      130px,
+      170px
+    );
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-top: 1px solid var(--border);
+  min-width: 0;
+}
+.notification-row:first-child {
+  border-top: 0;
+}
+.notification-row[data-invalid] {
+  background: #5b2b241c;
+}
+.notification-project-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.notification-project-name span {
+  display: block;
+  min-width: 0;
+}
+.notification-project-name strong,
+.notification-project-name small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notification-project-name small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.notification-row select {
+  width: 100%;
+  min-width: 0;
+}
+.notification-result-cell {
+  min-width: 0;
+}
+.notification-custom {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: 12px;
+}
+.notification-custom label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.notification-empty {
+  padding: var(--space-6);
+  text-align: center;
+}
+.notification-failures {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.notification-failure {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font-size: 12px;
+}
+.notification-failure > strong {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .notification-master-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .notification-master {
+    white-space: normal;
+  }
+  .notification-bulk select {
+    flex: 1 1 150px;
+    max-width: none;
+  }
+  .notification-row {
+    grid-template-columns: 20px minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+  .notification-row > select,
+  .notification-result-cell {
+    grid-column: 2;
+  }
+}
+@media (max-width: 460px) {
+  .notification-filters {
+    grid-template-columns: 1fr;
+  }
+  .notification-permission {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .notification-bulk select {
+    flex-basis: 100%;
+    width: 100%;
+  }
+}

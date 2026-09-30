@@ -1,4 +1,4 @@
-import { panelSettingsSchema } from "./domain";
+import { preferencesSchema, panelSettingsSchema } from "./domain";
 import type { Account, Activity, Provider, Snapshot, Target } from "./domain";
 
 export const DEMO_ACCOUNTS: Account[] = [
@@ -96,6 +96,7 @@ export function demoSnapshot(): Snapshot {
       scope: "mine",
       historyHours: 24,
       panel: panelSettingsSchema.parse({}),
+      preferences: preferencesSchema.parse({}),
       targets: DEMO_TARGETS,
       accounts: DEMO_ACCOUNTS,
     },

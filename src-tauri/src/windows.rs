@@ -126,6 +126,75 @@ pub(crate) fn open_dashboard(app: &AppHandle) -> Result<(), String> {
     hide_panel(app)
 }
 
+#[cfg(target_os = "macos")]
+fn position_panel(
+    app: &AppHandle,
+    panel: &tauri::WebviewWindow,
+    _rect: Rect,
+    _click: PhysicalPosition<f64>,
+) {
+    if let Err(error) = position_panel_macos(app, panel) {
+        eprintln!("Failed to position the status panel: {error}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn position_panel_macos(app: &AppHandle, panel: &tauri::WebviewWindow) -> Result<(), String> {
+    // Tao scales cursor coordinates with the PRIMARY display; tray events instead
+    // use the status item's display. Undo that scale before selecting a monitor.
+    let primary = app
+        .primary_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or("The primary display is unavailable.")?;
+    let cursor = app
+        .cursor_position()
+        .map_err(|e| e.to_string())?
+        .to_logical::<f64>(primary.scale_factor());
+    let monitor = app
+        .monitor_from_point(cursor.x, cursor.y)
+        .map_err(|e| e.to_string())?
+        .ok_or("The clicked display is unavailable.")?;
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    let work_origin = area.position.to_logical::<f64>(scale);
+    let work_size = area.size.to_logical::<f64>(scale);
+    let work = PixelRect {
+        x: work_origin.x,
+        y: work_origin.y,
+        width: work_size.width,
+        height: work_size.height,
+    };
+    // Replicated menu bars may report another display's status-item rectangle.
+    // Anchor to the actual pointer and this display's menu bar instead.
+    let tray = clicked_tray_rect(cursor.x, cursor.y, work.y);
+    let old_scale = panel.scale_factor().map_err(|e| e.to_string())?;
+    let size = panel
+        .outer_size()
+        .map_err(|e| e.to_string())?
+        .to_logical::<u32>(old_scale);
+    let point = anchored_position(
+        tray,
+        work,
+        PhysicalSize::new(size.width, size.height),
+        PANEL_GAP_LOGICAL,
+    );
+    // Physical positions would be divided by the panel's OLD display scale.
+    panel
+        .set_position(tauri::LogicalPosition::new(point.x, point.y))
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn clicked_tray_rect(x: f64, y: f64, menu_bottom: f64) -> PixelRect {
+    PixelRect {
+        x,
+        y,
+        width: 0.0,
+        height: (menu_bottom - y).max(0.0),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
 fn position_panel(
     app: &AppHandle,
     panel: &tauri::WebviewWindow,
@@ -197,6 +266,59 @@ fn anchored_position(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mirrored_tray_anchors_to_clicked_negative_display() {
+        let tray = clicked_tray_rect(-600.0, 310.0, 330.0);
+        let work = PixelRect {
+            x: -1512.0,
+            y: 330.0,
+            width: 1512.0,
+            height: 950.0,
+        };
+        assert_eq!(
+            anchored_position(tray, work, PhysicalSize::new(420, 540), 8.0),
+            PhysicalPosition::new(-810, 338)
+        );
+    }
+
+    #[test]
+    fn mixed_scale_panel_uses_logical_size_on_vertically_arranged_display() {
+        let tray = PixelRect {
+            x: 900.0,
+            y: 1100.0,
+            width: 24.0,
+            height: 32.0,
+        };
+        let work = PixelRect {
+            x: 0.0,
+            y: 1132.0,
+            width: 1512.0,
+            height: 950.0,
+        };
+        for old_scale in [1.0, 2.0] {
+            let physical = tauri::LogicalSize::new(420_u32, 540_u32).to_physical::<u32>(old_scale);
+            let logical = physical.to_logical::<u32>(old_scale);
+            assert_eq!(
+                anchored_position(
+                    tray,
+                    work,
+                    PhysicalSize::new(logical.width, logical.height),
+                    8.0
+                ),
+                PhysicalPosition::new(702, 1140)
+            );
+        }
+        assert_eq!(
+            anchored_position(
+                clicked_tray_rect(912.0, 1110.0, 1132.0),
+                work,
+                PhysicalSize::new(420, 540),
+                8.0
+            ),
+            PhysicalPosition::new(702, 1140)
+        );
+    }
 
     #[test]
     fn panel_anchors_below_a_top_tray_and_clamps_to_work_area() {

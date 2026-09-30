@@ -77,7 +77,7 @@ impl Provider {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ActivityStatus {
     Queued,
@@ -132,6 +132,72 @@ pub struct Settings {
     pub accounts: Vec<Account>,
     #[serde(default)]
     pub panel: crate::panel::PanelSettings,
+    #[serde(default)]
+    pub preferences: crate::preferences::Preferences,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PanelSettingsPatch {
+    pub show_active: Option<bool>,
+    pub show_completed: Option<bool>,
+    pub row_limit: Option<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NotificationRuleChange {
+    pub target_key: String,
+    pub enabled: Option<bool>,
+    pub scope: Option<Scope>,
+    pub statuses: Option<Vec<ActivityStatus>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum SettingsChange {
+    Scope {
+        value: Scope,
+    },
+    HistoryHours {
+        value: u32,
+    },
+    Language {
+        value: crate::preferences::Language,
+    },
+    AutomaticUpdates {
+        value: bool,
+    },
+    Panel {
+        patch: PanelSettingsPatch,
+    },
+    PanelProvider {
+        provider: Provider,
+        enabled: bool,
+    },
+    PanelTarget {
+        target_key: String,
+        visible: bool,
+    },
+    NotificationEnabled {
+        enabled: bool,
+    },
+    NotificationRules {
+        rules: Vec<NotificationRuleChange>,
+    },
+    Target {
+        target: Target,
+        selected: bool,
+    },
+    AccountAlias {
+        connection_id: String,
+        alias: Option<String>,
+    },
 }
 
 impl Default for Settings {
@@ -142,6 +208,7 @@ impl Default for Settings {
             targets: Vec::new(),
             accounts: default_accounts(),
             panel: crate::panel::PanelSettings::default(),
+            preferences: crate::preferences::Preferences::default(),
         }
     }
 }
@@ -170,6 +237,31 @@ fn default_history_hours() -> u32 {
 }
 
 impl Settings {
+    pub fn prune_target_references(&mut self) -> bool {
+        let target_keys: HashSet<_> = self.targets.iter().map(Target::key).collect();
+        let rules_before = self.preferences.notifications.rules.len();
+        self.preferences
+            .notifications
+            .rules
+            .retain(|rule| target_keys.contains(&rule.target_key));
+        let pins_before = self.panel.pinned_targets.len();
+        self.panel
+            .pinned_targets
+            .retain(|key| target_keys.contains(key));
+        let aliases_before = self.preferences.account_aliases.len();
+        let account_ids: HashSet<_> = self
+            .accounts
+            .iter()
+            .map(|account| account.id.as_str())
+            .collect();
+        self.preferences
+            .account_aliases
+            .retain(|connection_id, _| account_ids.contains(connection_id.as_str()));
+        rules_before != self.preferences.notifications.rules.len()
+            || pins_before != self.panel.pinned_targets.len()
+            || aliases_before != self.preferences.account_aliases.len()
+    }
+
     pub fn migrate_legacy(&mut self) -> bool {
         let mut changed = false;
         for required in default_accounts() {
@@ -221,11 +313,13 @@ impl Settings {
             };
             changed = true;
         }
+        changed |= self.prune_target_references();
         changed
     }
 
     pub fn validate(&self) -> Result<(), String> {
         self.panel.validate()?;
+        self.preferences.validate()?;
         if !matches!(self.history_hours, 24 | 168) {
             return Err("History must be either 24 or 168 hours.".into());
         }
@@ -270,6 +364,24 @@ impl Settings {
             )) {
                 return Err("Each selected target must be unique.".into());
             }
+        }
+        let target_keys: HashSet<_> = self.targets.iter().map(Target::key).collect();
+        if self
+            .preferences
+            .notifications
+            .rules
+            .iter()
+            .any(|rule| !target_keys.contains(&rule.target_key))
+        {
+            return Err("A notification rule references an unknown target.".into());
+        }
+        if self
+            .preferences
+            .account_aliases
+            .keys()
+            .any(|connection_id| !accounts.contains_key(connection_id.as_str()))
+        {
+            return Err("An account alias references an unknown account.".into());
         }
         Ok(())
     }
@@ -357,6 +469,24 @@ impl Target {
             return Err("Target metadata is invalid or too large.".into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod settings_change_tests {
+    use super::*;
+
+    #[test]
+    fn settings_change_uses_camel_case_and_rejects_unknown_fields() {
+        let change: SettingsChange = serde_json::from_str(
+            r#"{"kind":"accountAlias","connectionId":"github:local","alias":"Personal"}"#,
+        )
+        .unwrap();
+        assert!(matches!(change, SettingsChange::AccountAlias { .. }));
+        assert!(serde_json::from_str::<SettingsChange>(
+            r#"{"kind":"scope","value":"mine","unexpected":true}"#
+        )
+        .is_err());
     }
 }
 
@@ -521,6 +651,22 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn pruning_removed_targets_cleans_notification_rules_and_pins() {
+        let mut settings = Settings::default();
+        settings.panel.pinned_targets = vec!["github:github:local:org/removed".into()];
+        settings.preferences.notifications.rules = vec![crate::preferences::NotificationRule {
+            target_key: "github:github:local:org/removed".into(),
+            scope: crate::preferences::NotificationScope::Mine,
+            statuses: vec![ActivityStatus::Failed],
+            enabled: true,
+        }];
+        assert!(settings.prune_target_references());
+        assert!(settings.panel.pinned_targets.is_empty());
+        assert!(settings.preferences.notifications.rules.is_empty());
+        assert!(settings.validate().is_ok());
     }
 }
 

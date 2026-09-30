@@ -16,7 +16,7 @@
     gap: 6px;
   }
   .summary-card small {
-    font-size: 9px;
+    font-size: 12px;
   }
   .toolbar {
     gap: var(--space-2);

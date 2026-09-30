@@ -8,6 +8,8 @@ use crate::models::{Activity, ActivityStatus, Provider, Settings};
 pub struct PanelSettings {
     pub providers: Vec<Provider>,
     pub hidden_targets: Vec<String>,
+    pub pinned_targets: Vec<String>,
+    pub failure_first: bool,
     pub show_active: bool,
     pub show_completed: bool,
     pub row_limit: usize,
@@ -18,6 +20,8 @@ impl Default for PanelSettings {
         Self {
             providers: vec![Provider::Github, Provider::Vercel, Provider::Aws],
             hidden_targets: Vec::new(),
+            pinned_targets: Vec::new(),
+            failure_first: false,
             show_active: true,
             show_completed: true,
             row_limit: 5,
@@ -30,12 +34,21 @@ impl PanelSettings {
         if !(1..=10).contains(&self.row_limit)
             || self.providers.len() > 32
             || self.hidden_targets.len() > 500
+            || self.pinned_targets.len() > 500
             || self
                 .hidden_targets
                 .iter()
                 .any(|key| key.is_empty() || key.len() > 1600)
+            || self
+                .pinned_targets
+                .iter()
+                .any(|key| key.is_empty() || key.len() > 1600)
         {
             return Err("Status panel settings are invalid.".into());
+        }
+        let unique: std::collections::HashSet<_> = self.pinned_targets.iter().collect();
+        if unique.len() != self.pinned_targets.len() {
+            return Err("Pinned targets must be unique.".into());
         }
         Ok(())
     }
@@ -144,5 +157,11 @@ mod tests {
             .validate()
             .is_err());
         }
+        assert!(PanelSettings {
+            pinned_targets: vec!["github:github:local:example/repo".into(); 2],
+            ..PanelSettings::default()
+        }
+        .validate()
+        .is_err());
     }
 }

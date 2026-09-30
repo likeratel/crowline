@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("history loads only on demand and settings remain usable during polling", async ({
   page,
 }) => {
-  await page.route("**/src/bridge.ts", async (route) => {
+  await page.route(/\/src\/bridge\.ts(?:\?.*)?$/, async (route) => {
     const response = await route.fetch();
     const body = (await response.text())
       .replace(
@@ -30,7 +30,7 @@ test("history loads only on demand and settings remain usable during polling", a
   ).toBeDisabled();
   await page
     .getByLabel("이력 조회 대상")
-    .selectOption({ label: "GitHub Actions · orbit/web · GitHub CLI" });
+    .selectOption("github:github:local:github:orbit/web");
   await expect(
     page.getByRole("button", { name: "이전 배포 더 보기" }),
   ).toBeEnabled();
@@ -49,6 +49,8 @@ test("history loads only on demand and settings remain usable during polling", a
       () => (window as unknown as { __historyCalls?: number }).__historyCalls,
     ),
   ).toBe(1);
-  await page.getByRole("button", { name: "연결 및 설정" }).click();
-  await expect(page.getByRole("button", { name: "설정 저장" })).toBeEnabled();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await expect(
+    page.getByRole("tabpanel", { name: "서비스 연결" }),
+  ).toBeVisible();
 });

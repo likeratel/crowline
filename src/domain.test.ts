@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { demoSnapshot } from "./demo";
 import {
   duration,
+  latestCompleted,
+  sortPanelActivities,
   isActive,
   panelActivities,
   panelSettingsSchema,
@@ -124,25 +126,56 @@ describe("activity filtering", () => {
       visibleActivities({ ...snapshot, activities: [old] }, "all", ""),
     ).toHaveLength(0);
   });
-  it("uses completion time rather than creation time for recent runs", () => {
+  it("uses the latest update rather than creation or completion time for recent runs", () => {
     const snapshot = demoSnapshot();
+    const now = Date.parse("2026-09-30T12:00:00Z");
     const item = {
       ...snapshot.activities[0],
       status: "success" as const,
       startedAt: "2020-01-01T00:00:00Z",
-      finishedAt: new Date().toISOString(),
+      finishedAt: "2020-01-02T00:00:00Z",
+      updatedAt: "2026-09-30T11:00:00Z",
     };
     expect(
-      visibleActivities({ ...snapshot, activities: [item] }, "all", ""),
+      visibleActivities({ ...snapshot, activities: [item] }, "all", "", now),
     ).toHaveLength(1);
   });
-  it("excludes old terminal activities, allows longer history", () => {
+  it("orders visible and grouped completed runs by their latest update", () => {
     const snapshot = demoSnapshot();
-    const finishedAt = new Date(Date.now() - 48 * 3600_000).toISOString();
+    const latestUpdate = {
+      ...snapshot.activities[0],
+      id: "latest-update",
+      status: "success" as const,
+      finishedAt: "2026-09-28T12:00:00Z",
+      updatedAt: "2026-09-30T11:00:00Z",
+    };
+    const latestFinish = {
+      ...latestUpdate,
+      id: "latest-finish",
+      finishedAt: "2026-09-30T11:30:00Z",
+      updatedAt: "2026-09-30T10:00:00Z",
+    };
+    const now = Date.parse("2026-09-30T12:00:00Z");
+
+    expect(
+      visibleActivities(
+        { ...snapshot, activities: [latestFinish, latestUpdate] },
+        "all",
+        "",
+        now,
+      ).map((item) => item.id),
+    ).toEqual(["latest-update", "latest-finish"]);
+    expect(latestCompleted([latestFinish, latestUpdate])).toEqual([
+      latestUpdate,
+    ]);
+  });
+  it("excludes old terminal updates, allows longer history", () => {
+    const snapshot = demoSnapshot();
+    const updatedAt = new Date(Date.now() - 48 * 3600_000).toISOString();
     const changed = {
       ...snapshot,
       activities: [
-        { ...snapshot.activities[0], status: "success" as const, finishedAt },
+        { ...snapshot.activities[0], status: "success" as const, updatedAt },
       ],
     };
     expect(visibleActivities(changed, "all", "")).toEqual([]);
@@ -275,5 +308,81 @@ describe("status panel policy", () => {
     for (const rowLimit of [0, 11, 1.5]) {
       expect(panelSettingsSchema.safeParse({ rowLimit }).success).toBe(false);
     }
+  });
+});
+
+describe("panel activity order and settings migration", () => {
+  it("sorts persisted pinned and failure-first settings by updated time without mutating the source", () => {
+    const snapshot = demoSnapshot();
+    const activities = [
+      {
+        ...snapshot.activities[0],
+        id: "oldest",
+        status: "failed" as const,
+        updatedAt: "2026-09-28T12:00:00Z",
+      },
+      {
+        ...snapshot.activities[0],
+        id: "newest",
+        provider: snapshot.settings.targets[1].provider,
+        connectionId: snapshot.settings.targets[1].connectionId,
+        targetId: snapshot.settings.targets[1].id,
+        updatedAt: "2026-09-30T12:00:00Z",
+      },
+      {
+        ...snapshot.activities[0],
+        id: "middle",
+        updatedAt: "2026-09-29T12:00:00Z",
+      },
+    ];
+    const original = [...activities];
+    const legacyPanel = panelSettingsSchema.parse({
+      ...snapshot.settings.panel,
+      pinnedTargets: [targetKey(snapshot.settings.targets[0])],
+      failureFirst: true,
+    });
+    const sorted = sortPanelActivities(activities, legacyPanel);
+
+    expect(sorted.map((item) => item.id)).toEqual([
+      "newest",
+      "middle",
+      "oldest",
+    ]);
+    expect(activities).toEqual(original);
+    expect(sorted).not.toBe(activities);
+  });
+  it("defaults legacy settings to system language, no alerts, and no pins", () => {
+    const snapshot = demoSnapshot();
+    const { preferences: _preferences, ...legacy } = snapshot.settings;
+    const {
+      pinnedTargets: _pins,
+      failureFirst: _failures,
+      ...panel
+    } = legacy.panel;
+    const migrated = settingsSchema.parse({ ...legacy, panel });
+    expect(migrated.preferences.language).toBe("system");
+    expect(migrated.preferences.notifications.enabled).toBe(false);
+    expect(migrated.panel.pinnedTargets).toEqual([]);
+  });
+  it("rejects unknown languages and duplicate notification rules", () => {
+    const snapshot = demoSnapshot();
+    expect(
+      settingsSchema.safeParse({
+        ...snapshot.settings,
+        preferences: { language: "not-a-language" },
+      }).success,
+    ).toBe(false);
+    const rule = {
+      targetKey: targetKey(snapshot.settings.targets[0]),
+      enabled: true,
+      scope: "all",
+      statuses: ["failed"],
+    };
+    expect(
+      settingsSchema.safeParse({
+        ...snapshot.settings,
+        preferences: { notifications: { rules: [rule, rule] } },
+      }).success,
+    ).toBe(false);
   });
 });

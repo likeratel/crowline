@@ -1,0 +1,73 @@
+name: Build signed desktop release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: macOS Intel
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+          - name: macOS Apple Silicon
+            runner: macos-15
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+          - name: Windows x64
+            runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.2
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.23.3
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.8'
+          cache: false
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare checksum-verified bundled tools
+        run: pnpm tools:prepare
+
+      - name: Build signed draft release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          CROWLINE_UPDATER_PUBLIC_KEY: ${{ vars.CROWLINE_UPDATER_PUBLIC_KEY }}
+          CROWLINE_RELEASE_TARGET: ${{ matrix.target }}
+        with:
+          tauriScript: bash scripts/verify-updater/build.sh
+          tagName: v__VERSION__
+          releaseName: crowline v__VERSION__
+          releaseBody: See the repository changelog and attached installers for this release.
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: true
+          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json

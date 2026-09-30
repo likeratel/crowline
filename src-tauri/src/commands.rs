@@ -4,8 +4,8 @@ use tauri_plugin_opener::OpenerExt;
 use crate::{
     login,
     models::{
-        Account, Discovery, LoginStatus, Provider, Settings, Snapshot, AWS_DISCOVERY_ID,
-        LOCAL_GITHUB_ID, LOCAL_VERCEL_ID,
+        Account, Discovery, LoginStatus, Provider, Settings, SettingsChange, Snapshot,
+        AWS_DISCOVERY_ID, LOCAL_GITHUB_ID, LOCAL_VERCEL_ID,
     },
     providers::{aws, github, vercel},
     state::AppState,
@@ -23,6 +23,15 @@ pub async fn save_settings(
     settings: Settings,
 ) -> Result<Settings, String> {
     state.save_settings(settings, &app).await
+}
+
+#[tauri::command]
+pub async fn change_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    change: SettingsChange,
+) -> Result<Settings, String> {
+    state.change_settings(change, &app).await
 }
 
 #[tauri::command]

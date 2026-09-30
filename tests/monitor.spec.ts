@@ -33,24 +33,28 @@ test("clearly labels preview and filters mine, all, service and search", async (
 test("settings can discover targets, deselect them and reach onboarding", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: "연결 및 설정" }).click();
-  await expect(page.getByRole("dialog", { name: "서비스 연결" })).toBeVisible();
-  await page.getByRole("button", { name: "연결 및 대상 확인" }).click();
-  await page.getByRole("checkbox").uncheck();
-  await page.getByRole("tab", { name: "Vercel" }).click();
-  await page.getByRole("checkbox").uncheck();
-  await page.getByRole("tab", { name: "AWS" }).click();
-  await page.getByRole("checkbox").uncheck();
-  await page.getByRole("button", { name: "설정 저장" }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const connections = page.getByRole("tabpanel", { name: "서비스 연결" });
+  await expect(connections.locator(".connections-settings")).toBeVisible();
+  await connections.getByRole("button", { name: "연결 및 대상 확인" }).click();
+  await connections.getByRole("checkbox").uncheck();
+  await connections.getByRole("tab", { name: "Vercel" }).click();
+  await connections.getByRole("checkbox").uncheck();
+  await connections.getByRole("tab", { name: "AWS" }).click();
+  await connections.getByRole("checkbox").uncheck();
+  await page.getByRole("button", { name: /^전체 서비스/ }).click();
   await expect(page.getByText("첫 번째 연결을 추가해 보세요")).toBeVisible();
 });
 test("browser preview cannot pretend a real login succeeded", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: "연결 및 설정" }).click();
-  await page.getByRole("button", { name: "브라우저로 로그인" }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await page
+    .getByRole("tabpanel", { name: "서비스 연결" })
+    .getByRole("button", { name: "브라우저로 로그인" })
+    .click();
   await expect(
-    page.getByText("로그인은 데스크톱 앱에서 사용할 수 있습니다."),
+    page.getByText("데스크톱 앱에서 사용할 수 있습니다."),
   ).toBeVisible();
 });
 test("black theme stays dark across OS preferences and fits narrow windows", async ({

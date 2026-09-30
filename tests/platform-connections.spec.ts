@@ -4,24 +4,26 @@ test("searches the platform catalog and explains unsupported platforms", async (
   page,
 }) => {
   await page.goto("/?view=dashboard");
-  await page.getByRole("button", { name: "연결 및 설정" }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const connections = page.getByRole("tabpanel", { name: "서비스 연결" });
 
-  const platformSearch = page.getByLabel("플랫폼 검색");
+  const platformSearch = connections.getByLabel("플랫폼 검색");
   await platformSearch.fill("Railway");
   await expect(
-    page.getByRole("tab", { name: "Railway", exact: true }),
+    connections.getByRole("tab", { name: "Railway", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("tab", { name: "Vercel", exact: true }),
+    connections.getByRole("tab", { name: "Vercel", exact: true }),
   ).toHaveCount(0);
-  await page.getByRole("tab", { name: "Railway", exact: true }).click();
+  await connections.getByRole("tab", { name: "Railway", exact: true }).click();
   await expect(
     page.getByText("이 기기의 CLI 세션", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "CLI 세션 연결" }),
   ).toBeVisible();
-  await expect(page.getByText("railway login", { exact: true })).toBeVisible();
+  await connections.locator("details.connection-help summary").click();
+  await expect(page.getByText(/railway login/).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "로그인 시작" })).toHaveCount(
     0,
   );
@@ -59,7 +61,7 @@ test("searches the platform catalog and explains unsupported platforms", async (
     },
   ]) {
     await platformSearch.fill(unsupported.search);
-    await page
+    await connections
       .getByRole("tab", { name: unsupported.name, exact: true })
       .click();
     await expect(

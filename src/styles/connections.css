@@ -381,3 +381,31 @@
   line-height: 1.5;
   margin-top: var(--space-2);
 }
+
+.account-apply-note {
+  display: block;
+  margin-bottom: var(--space-2);
+  color: var(--muted);
+  font-size: 12px;
+}
+.account-removal-confirmation {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid #b97878;
+  border-radius: var(--radius-control);
+  background: var(--canvas);
+}
+.account-removal-confirmation strong {
+  font-size: 13px;
+}
+.account-removal-confirmation p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.account-removal-confirmation > div {
+  display: flex;
+  gap: var(--space-2);
+}

@@ -18,6 +18,7 @@ fn test_state(directory: &Path) -> AppState {
         settings_revision: AtomicU64::new(0),
         refresh_epoch: AtomicU64::new(0),
         history_lock: Mutex::new(()),
+        notification_engine: Mutex::new(NotificationEngine::default()),
         login_statuses: Mutex::new(HashMap::new()),
     }
 }
@@ -195,6 +196,86 @@ async fn settings_save_rejects_forged_account_definitions() {
 }
 
 #[tokio::test]
+async fn settings_save_atomically_prunes_removed_target_rules_and_pins() {
+    let directory = test_directory("prune-target-preferences");
+    let state = test_state(&directory);
+    let stale_key = "github:github:local:org/removed".to_owned();
+    let mut settings = Settings::default();
+    settings.panel.pinned_targets = vec![stale_key.clone()];
+    settings.preferences.notifications.rules = vec![crate::preferences::NotificationRule {
+        target_key: stale_key,
+        scope: crate::preferences::NotificationScope::Mine,
+        statuses: vec![ActivityStatus::Failed],
+        enabled: true,
+    }];
+
+    let saved = state
+        .save_settings(settings, &NoopPublisher)
+        .await
+        .expect("save normalized settings");
+
+    assert!(saved.panel.pinned_targets.is_empty());
+    assert!(saved.preferences.notifications.rules.is_empty());
+    assert_eq!(state.store.load().await.unwrap(), saved);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn committed_disable_enable_aba_rebaselines_notification_engine() {
+    let directory = test_directory("notification-aba");
+    let state = test_state(&directory);
+    let selected = target(LOCAL_GITHUB_ID, "aba");
+    let rule = crate::preferences::NotificationRule {
+        target_key: selected.key(),
+        scope: crate::preferences::NotificationScope::All,
+        statuses: vec![ActivityStatus::Failed],
+        enabled: true,
+    };
+    let mut enabled = Settings {
+        targets: vec![selected.clone()],
+        ..Settings::default()
+    };
+    enabled.preferences.notifications.enabled = true;
+    enabled.preferences.notifications.rules = vec![rule.clone()];
+    state.snapshot.write().await.settings = enabled.clone();
+    let running = Activity {
+        status: ActivityStatus::Running,
+        ..activity(LOCAL_GITHUB_ID, "aba")
+    };
+    state.notification_engine.lock().await.observe(
+        &selected,
+        std::slice::from_ref(&running),
+        &enabled.preferences,
+        1,
+        Utc::now(),
+    );
+
+    let mut disabled = enabled.clone();
+    disabled.preferences.notifications.enabled = false;
+    state
+        .save_settings(disabled, &NoopPublisher)
+        .await
+        .expect("disable notifications");
+    state
+        .save_settings(enabled.clone(), &NoopPublisher)
+        .await
+        .expect("re-enable notifications");
+
+    let terminal = Activity {
+        status: ActivityStatus::Failed,
+        updated_at: (Utc::now() + chrono::Duration::seconds(1)).to_rfc3339(),
+        ..running
+    };
+    assert!(state
+        .notification_engine
+        .lock()
+        .await
+        .observe(&selected, &[terminal], &enabled.preferences, 2, Utc::now(),)
+        .is_empty());
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
 async fn unknown_connection_is_rejected_before_cli_resolution() {
     let directory = test_directory("unknown-connection");
     let state = test_state(&directory);
@@ -253,6 +334,47 @@ async fn removed_account_rejects_late_login_publication() {
 }
 
 #[tokio::test]
+async fn remove_connection_prunes_its_notification_rule_and_pin() {
+    let directory = test_directory("remove-account-preferences");
+    let state = test_state(&directory);
+    let account = state
+        .create_connection(Provider::Vercel, "Work".into(), None, &NoopPublisher)
+        .await
+        .expect("create account");
+    let selected = Target {
+        id: "project-id".into(),
+        provider: Provider::Vercel,
+        connection_id: account.id.clone(),
+        name: "Example project".into(),
+        description: None,
+        metadata: HashMap::new(),
+    };
+    let key = selected.key();
+    {
+        let mut snapshot = state.snapshot.write().await;
+        snapshot.settings.targets = vec![selected];
+        snapshot.settings.panel.pinned_targets = vec![key.clone()];
+        snapshot.settings.preferences.notifications.rules =
+            vec![crate::preferences::NotificationRule {
+                target_key: key,
+                scope: crate::preferences::NotificationScope::Mine,
+                statuses: vec![ActivityStatus::Failed],
+                enabled: true,
+            }];
+    }
+
+    let saved = state
+        .remove_connection(&account.id, &NoopPublisher)
+        .await
+        .expect("remove account and dependent preferences");
+
+    assert!(saved.targets.is_empty());
+    assert!(saved.panel.pinned_targets.is_empty());
+    assert!(saved.preferences.notifications.rules.is_empty());
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
 async fn simultaneous_account_mutations_do_not_lose_updates() {
     let directory = test_directory("concurrent-mutations");
     let state = test_state(&directory);
@@ -280,6 +402,293 @@ async fn simultaneous_account_mutations_do_not_lose_updates() {
         state.store.load().await.expect("load persisted settings"),
         snapshot.settings
     );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn simultaneous_setting_changes_preserve_unrelated_fields() {
+    let directory = test_directory("concurrent-setting-changes");
+    let state = test_state(&directory);
+
+    let (scope, history) = tokio::join!(
+        state.change_settings(SettingsChange::Scope { value: Scope::All }, &NoopPublisher),
+        state.change_settings(SettingsChange::HistoryHours { value: 168 }, &NoopPublisher)
+    );
+
+    scope.expect("save scope");
+    history.expect("save history");
+    let saved = state.snapshot().await.settings;
+    assert_eq!(saved.scope, Scope::All);
+    assert_eq!(saved.history_hours, 168);
+    assert_eq!(state.store.load().await.unwrap(), saved);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn setting_changes_reject_unknown_target_and_account_keys() {
+    let directory = test_directory("invalid-setting-keys");
+    let state = test_state(&directory);
+
+    let target_error = state
+        .change_settings(
+            SettingsChange::PanelTarget {
+                target_key: "github:github:local:org/missing".into(),
+                visible: false,
+            },
+            &NoopPublisher,
+        )
+        .await
+        .expect_err("unknown target must fail");
+    let account_error = state
+        .change_settings(
+            SettingsChange::AccountAlias {
+                connection_id: "github:missing".into(),
+                alias: Some("Missing".into()),
+            },
+            &NoopPublisher,
+        )
+        .await
+        .expect_err("unknown account must fail");
+
+    assert_eq!(target_error, "The selected target does not exist.");
+    assert_eq!(account_error, "The selected account does not exist.");
+    assert_eq!(state.snapshot().await.settings, Settings::default());
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn account_aliases_are_trimmed_validated_removed_and_pruned() {
+    let directory = test_directory("account-aliases");
+    let state = test_state(&directory);
+    let account = state
+        .create_connection(Provider::Vercel, "Work".into(), None, &NoopPublisher)
+        .await
+        .expect("create account");
+
+    let aliased = state
+        .change_settings(
+            SettingsChange::AccountAlias {
+                connection_id: account.id.clone(),
+                alias: Some("  Production  ".into()),
+            },
+            &NoopPublisher,
+        )
+        .await
+        .expect("set alias");
+    assert_eq!(
+        aliased.preferences.account_aliases.get(&account.id),
+        Some(&"Production".to_owned())
+    );
+
+    for alias in [Some("   ".to_owned()), Some("x".repeat(81))] {
+        assert!(state
+            .change_settings(
+                SettingsChange::AccountAlias {
+                    connection_id: account.id.clone(),
+                    alias,
+                },
+                &NoopPublisher,
+            )
+            .await
+            .is_err());
+    }
+    let removed = state
+        .change_settings(
+            SettingsChange::AccountAlias {
+                connection_id: account.id.clone(),
+                alias: None,
+            },
+            &NoopPublisher,
+        )
+        .await
+        .expect("remove alias");
+    assert!(!removed
+        .preferences
+        .account_aliases
+        .contains_key(&account.id));
+
+    state
+        .change_settings(
+            SettingsChange::AccountAlias {
+                connection_id: account.id.clone(),
+                alias: Some("Work account".into()),
+            },
+            &NoopPublisher,
+        )
+        .await
+        .expect("restore alias");
+    let pruned = state
+        .remove_connection(&account.id, &NoopPublisher)
+        .await
+        .expect("remove aliased account");
+    assert!(!pruned.preferences.account_aliases.contains_key(&account.id));
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn new_notification_rules_use_all_outcome_defaults() {
+    let directory = test_directory("notification-rule-defaults");
+    let state = test_state(&directory);
+    let selected = target(LOCAL_GITHUB_ID, "defaults");
+    state.snapshot.write().await.settings.targets = vec![selected.clone()];
+
+    let saved = state
+        .change_settings(
+            SettingsChange::NotificationRules {
+                rules: vec![crate::models::NotificationRuleChange {
+                    target_key: selected.key(),
+                    enabled: None,
+                    scope: None,
+                    statuses: None,
+                }],
+            },
+            &NoopPublisher,
+        )
+        .await
+        .expect("create default rule");
+
+    let rule = &saved.preferences.notifications.rules[0];
+    assert!(!rule.enabled);
+    assert_eq!(rule.scope, crate::preferences::NotificationScope::Mine);
+    assert_eq!(
+        rule.statuses,
+        vec![
+            ActivityStatus::Success,
+            ActivityStatus::Failed,
+            ActivityStatus::Canceled
+        ]
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn notification_rule_patch_preserves_unmentioned_targets() {
+    let directory = test_directory("notification-rule-patch");
+    let state = test_state(&directory);
+    let first = target(LOCAL_GITHUB_ID, "first");
+    let second = target(LOCAL_GITHUB_ID, "second");
+    {
+        let mut snapshot = state.snapshot.write().await;
+        snapshot.settings.targets = vec![first.clone(), second.clone()];
+        snapshot.settings.preferences.notifications.rules = vec![
+            crate::preferences::NotificationRule {
+                target_key: first.key(),
+                scope: crate::preferences::NotificationScope::Mine,
+                statuses: vec![ActivityStatus::Failed],
+                enabled: false,
+            },
+            crate::preferences::NotificationRule {
+                target_key: second.key(),
+                scope: crate::preferences::NotificationScope::All,
+                statuses: vec![ActivityStatus::Canceled],
+                enabled: true,
+            },
+        ];
+    }
+
+    let saved = state
+        .change_settings(
+            SettingsChange::NotificationRules {
+                rules: vec![crate::models::NotificationRuleChange {
+                    target_key: first.key(),
+                    enabled: Some(true),
+                    scope: None,
+                    statuses: None,
+                }],
+            },
+            &NoopPublisher,
+        )
+        .await
+        .expect("patch one notification rule");
+
+    assert_eq!(saved.preferences.notifications.rules.len(), 2);
+    assert!(saved.preferences.notifications.rules[0].enabled);
+    assert_eq!(
+        saved.preferences.notifications.rules[1],
+        crate::preferences::NotificationRule {
+            target_key: second.key(),
+            scope: crate::preferences::NotificationScope::All,
+            statuses: vec![ActivityStatus::Canceled],
+            enabled: true,
+        }
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn concurrent_notification_rule_patches_preserve_both_targets() {
+    let directory = test_directory("concurrent-notification-rule-patches");
+    let state = test_state(&directory);
+    let first = target(LOCAL_GITHUB_ID, "first");
+    let second = target(LOCAL_GITHUB_ID, "second");
+    {
+        let mut snapshot = state.snapshot.write().await;
+        snapshot.settings.targets = vec![first.clone(), second.clone()];
+        snapshot.settings.preferences.notifications.rules = vec![
+            crate::preferences::NotificationRule {
+                target_key: first.key(),
+                scope: crate::preferences::NotificationScope::Mine,
+                statuses: vec![ActivityStatus::Failed],
+                enabled: false,
+            },
+            crate::preferences::NotificationRule {
+                target_key: second.key(),
+                scope: crate::preferences::NotificationScope::Mine,
+                statuses: vec![ActivityStatus::Failed],
+                enabled: false,
+            },
+        ];
+    }
+
+    let (first_result, second_result) = tokio::join!(
+        state.change_settings(
+            SettingsChange::NotificationRules {
+                rules: vec![crate::models::NotificationRuleChange {
+                    target_key: first.key(),
+                    enabled: Some(true),
+                    scope: None,
+                    statuses: None,
+                }],
+            },
+            &NoopPublisher,
+        ),
+        state.change_settings(
+            SettingsChange::NotificationRules {
+                rules: vec![crate::models::NotificationRuleChange {
+                    target_key: second.key(),
+                    enabled: None,
+                    scope: Some(Scope::All),
+                    statuses: Some(vec![ActivityStatus::Success]),
+                }],
+            },
+            &NoopPublisher,
+        )
+    );
+    first_result.expect("patch first rule");
+    second_result.expect("patch second rule");
+
+    let saved = state.snapshot().await.settings;
+    let first_rule = saved
+        .preferences
+        .notifications
+        .rules
+        .iter()
+        .find(|rule| rule.target_key == first.key())
+        .unwrap();
+    let second_rule = saved
+        .preferences
+        .notifications
+        .rules
+        .iter()
+        .find(|rule| rule.target_key == second.key())
+        .unwrap();
+    assert!(first_rule.enabled);
+    assert_eq!(
+        second_rule.scope,
+        crate::preferences::NotificationScope::All
+    );
+    assert_eq!(second_rule.statuses, vec![ActivityStatus::Success]);
+    assert_eq!(state.store.load().await.unwrap(), saved);
     let _ = std::fs::remove_dir_all(directory);
 }
 
