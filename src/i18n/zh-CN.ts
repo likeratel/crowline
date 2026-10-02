@@ -172,6 +172,8 @@ export const zhCN = {
   "connections.targets": "监控目标",
   "connections.searchTargets": "搜索目标",
   "connections.searchByName": "按名称搜索",
+  "connections.selectAllVisible": "选择所有搜索结果",
+  "connections.deselectAllVisible": "取消选择所有搜索结果",
   "connections.noTargets": "没有可访问的目标。请检查账户、权限和区域。",
   "connections.verifyFirst": "检查连接后，可选择的目标将显示在此处。",
   "connections.actorHelp":

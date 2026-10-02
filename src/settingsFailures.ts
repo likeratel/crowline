@@ -1,3 +1,4 @@
+import { targetKey } from "./domain";
 import { settingsChangeKey, type SettingsChange } from "./settingsChanges";
 import type { SettingsFailure } from "./settingsQueue";
 
@@ -6,6 +7,24 @@ export function remainingChange(
   original: SettingsChange,
   newer: SettingsChange,
 ): SettingsChange | null {
+  if (
+    (original.kind === "target" || original.kind === "targets") &&
+    (newer.kind === "target" || newer.kind === "targets")
+  ) {
+    const newerKeys = new Set(
+      newer.kind === "target"
+        ? [targetKey(newer.target)]
+        : newer.targets.map(targetKey),
+    );
+    const originalTargets =
+      original.kind === "target" ? [original.target] : original.targets;
+    const remaining = originalTargets.filter(
+      (target) => !newerKeys.has(targetKey(target)),
+    );
+    if (remaining.length === 0) return null;
+    if (original.kind === "target") return original;
+    return { ...original, targets: remaining };
+  }
   if (
     original.kind === "notificationRules" &&
     newer.kind === "notificationRules"

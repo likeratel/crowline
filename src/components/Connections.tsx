@@ -20,6 +20,7 @@ import { SettingFeedback } from "./SettingFeedback";
 import { accountDisplayName } from "../accountNames";
 import { useI18n } from "../i18n";
 import { settingsCopy } from "../settingsCopy";
+import { targetsChangedByBulkSelection } from "./connectionTargets";
 interface Props {
   snapshot: Snapshot;
   saving?: boolean;
@@ -35,7 +36,7 @@ export function Connections({
   onReload,
 }: Props) {
   const { locale, t } = useI18n();
-  const { change } = useSettingsChanges();
+  const { change, failures, pendingKeys } = useSettingsChanges();
   const [provider, setProvider] = useState<Provider>("github");
   const [connectionId, setConnectionId] = useState(
     snapshot.settings.accounts.find((account) => account.provider === "github")
@@ -69,7 +70,9 @@ export function Connections({
   const [search, setSearch] = useState("");
   const [providerSearch, setProviderSearch] = useState("");
   const [busy, setBusy] = useState(false);
-  const working = busy || saving;
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const bulkSavePending = useRef(false);
+  const working = busy || saving || bulkSaving;
   useEffect(() => {
     onBusyChange?.(busy);
   }, [busy, onBusyChange]);
@@ -315,6 +318,55 @@ export function Connections({
       .toLowerCase()
       .includes(search.toLowerCase()),
   );
+  const selectedTargetKeys = new Set(selected.map(targetKey));
+  const allVisibleSelected =
+    targets.length > 0 &&
+    targets.every((target) => selectedTargetKeys.has(targetKey(target)));
+  const anyVisibleSelected = targets.some((target) =>
+    selectedTargetKeys.has(targetKey(target)),
+  );
+  const currentTargetPrefix = `${provider}:${connectionId}:`;
+  const bulkFeedbackKeys = [
+    ...pendingKeys.filter(
+      (key) =>
+        key.startsWith(`targets:${currentTargetPrefix}`) ||
+        key.includes(`|${currentTargetPrefix}`),
+    ),
+    ...Object.entries(failures).flatMap(([key, failure]) =>
+      failure.change.kind === "targets" &&
+      failure.change.targets.every(
+        (target) =>
+          target.provider === provider && target.connectionId === connectionId,
+      )
+        ? [key]
+        : [],
+    ),
+  ].filter((key, index, all) => all.indexOf(key) === index);
+  const setVisibleTargetsSelected = async (shouldSelect: boolean) => {
+    if (bulkSavePending.current || targets.length === 0) return;
+    const changedTargets = targetsChangedByBulkSelection(
+      targets,
+      selectedTargetKeys,
+      shouldSelect,
+    );
+    if (changedTargets.length === 0) return;
+    bulkSavePending.current = true;
+    setBulkSaving(true);
+    setError(null);
+    try {
+      const bulkChange = {
+        kind: "targets" as const,
+        targets: changedTargets,
+        selected: shouldSelect,
+      };
+      if (await change(bulkChange)) await onRefresh();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      bulkSavePending.current = false;
+      setBulkSaving(false);
+    }
+  };
   const catalog = PROVIDERS.filter((item) =>
     `${PROVIDER_NAMES[item]} ${item}`
       .toLocaleLowerCase()
@@ -607,15 +659,40 @@ export function Connections({
                   </span>
                 </div>
                 {mergedTargets.length > 0 && (
-                  <label className="search-box target-search">
-                    <Search size={15} />
-                    <input
-                      aria-label={t("connections.searchTargets")}
-                      value={search}
-                      placeholder={t("connections.searchByName")}
-                      onChange={(event) => setSearch(event.target.value)}
-                    />
-                  </label>
+                  <div className="target-controls">
+                    <label className="search-box target-search">
+                      <Search size={15} />
+                      <input
+                        aria-label={t("connections.searchTargets")}
+                        value={search}
+                        placeholder={t("connections.searchByName")}
+                        onChange={(event) => setSearch(event.target.value)}
+                      />
+                    </label>
+                    <div className="target-bulk-actions">
+                      <button
+                        type="button"
+                        className="text-button"
+                        disabled={
+                          working || targets.length === 0 || allVisibleSelected
+                        }
+                        onClick={() => void setVisibleTargetsSelected(true)}
+                      >
+                        {t("connections.selectAllVisible")}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-button"
+                        disabled={working || !anyVisibleSelected}
+                        onClick={() => void setVisibleTargetsSelected(false)}
+                      >
+                        {t("connections.deselectAllVisible")}
+                      </button>
+                      {bulkFeedbackKeys.map((key) => (
+                        <SettingFeedback key={key} changeKey={key} />
+                      ))}
+                    </div>
+                  </div>
                 )}
                 <div className="target-list">
                   {targets.length ? (

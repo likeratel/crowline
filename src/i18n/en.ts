@@ -191,6 +191,8 @@ export const en = {
   "connections.targets": "Monitoring targets",
   "connections.searchTargets": "Search targets",
   "connections.searchByName": "Search by name",
+  "connections.selectAllVisible": "Select all results",
+  "connections.deselectAllVisible": "Deselect all results",
   "connections.noTargets":
     "No targets are available. Check the account, permissions, and region.",
   "connections.verifyFirst":

@@ -59,7 +59,7 @@ pnpm desktop:build
 
 ## 连接账号和选择项目
 
-打开 **设置 → 连接**，选择服务并连接账号，再选择要监控的项目。修改会立即生效，可通过账号选择框旁的铅笔按钮修改别名。
+打开 **设置 → 连接**，选择服务并连接账号，再选择要监控的项目。修改会立即生效，可通过账号选择框旁的铅笔按钮修改别名。 可一次性全选或取消选择当前搜索结果，不会改变被搜索条件隐藏的项目或其他账号的选择。
 
 GitHub 和 Vercel 可复用本地 CLI 登录，也可通过浏览器添加其他账号。安装包已包含这两个服务的 CLI。AWS 使用现有配置文件和所选区域，启动 SSO 登录需要 AWS CLI。其他 CLI 集成需要自行安装官方 CLI 并登录。
 
@@ -87,7 +87,7 @@ EAS/Expo、fastlane、Cloudflare Pages/Workers、Firebase、Supabase 只提供�
 
 在 **设置 → 连接 → Bitbucket** 中输入 Atlassian 邮箱和 [API 令牌](https://support.atlassian.com/bitbucket-cloud/docs/create-an-api-token/)，再选择要监控的仓库。令牌需要 `read:user:bitbucket`、`read:workspace:bitbucket`、`read:repository:bitbucket` 和 `read:pipeline:bitbucket` 权限，无需安装 CLI。默认账号名称来自 Bitbucket，也可点击铅笔设置别名。通过 **更换令牌** 更新同一账号的凭据时，会保留已选仓库。
 
-凭据仅保存在系统凭据存储中，不会写入设置文件、日志或安装包。删除 Bitbucket 连接时，也会删除对应凭据。菜单栏显示和项目通知沿用现有设置。无法确认执行者的 Pipeline 会标为未知，不计入“我的执行”。尚未验证真实账号连接，测试使用虚构数据。
+凭据仅保存在系统凭据存储中，不会写入设置文件、日志或安装包。删除 Bitbucket 连接时，也会删除对应凭据。菜单栏显示和项目通知沿用现有设置。无法确认执行者的 Pipeline 会标为未知，不计入“我的执行”。已于 2026-10-02 验证现有连接下 3 个仓库的最近执行及进行中状态查询。新账号连接流程仍未验证，自动测试使用虚构数据。
 
 最近的 Pipeline 每页读取20条。运行、等待及暂停等状态并行查询，每种状态最多50条。仓库发现最多查询1,000个仓库、50页仓库列表和10页工作区列表；达到上限或部分查询失败时会在界面提示。
 
@@ -109,7 +109,7 @@ EAS/Expo、fastlane、Cloudflare Pages/Workers、Firebase、Supabase 只提供�
 
 当前版本尚未配置自动更新。仓库为私有仓库，其发布地址不能作为公开更新源。分发和更新配置请参阅[发布文档](docs/releases.md)。
 
-本地已验证 macOS Apple Silicon 构建与启动、GitHub/Vercel 面板数据，以及使用虚构数据的自动测试。Windows 运行、真实 AWS/Bitbucket 连接、额外账号的浏览器登录及最新系统通知横幅仍未验证。依赖项问题记录在注明日期的[安全审查](docs/security-review.md)中。
+本地已验证 macOS Apple Silicon 构建与启动、GitHub/Vercel 面板数据、Bitbucket 流水线查询，以及使用虚构数据的自动测试。Windows 运行、真实 AWS 连接、额外账号的浏览器登录及最新系统通知横幅仍未验证。依赖项问题记录在注明日期的[安全审查](docs/security-review.md)中。
 
 其他资料见[文档索引](docs/README.md)。
 

@@ -8,6 +8,24 @@ The workflow below is retained for future release engineering. Do not publish a 
 
 For local app and installer builds, use the [README build commands](../README.md#build). Apple/Windows signing and notarization are separate from Tauri updater signing.
 
+## Local Developer ID distribution
+
+Direct macOS distribution uses a **Developer ID Application** certificate and Apple notarization, independently of App Store or Tauri updater signing. Install the certificate and its private key in the local keychain; keep both out of Git. Confirm availability with `security find-identity -v -p codesigning`.
+
+Store notarization credentials interactively in the keychain:
+
+```sh
+xcrun notarytool store-credentials crowline --team-id YOUR_TEAM_ID
+```
+
+Use an Apple account app-specific password when prompted. Do not put passwords in commands, source files, build logs, or chat.
+
+A distribution build must sign every bundled Mach-O file as well as the outer app, with secure timestamps and hardened runtime. This includes GitHub helpers, Node.js, and the Vercel CLI's native modules under `tools/`. Node needs the `com.apple.security.cs.allow-jit` entitlement; do not retain development entitlements such as `com.apple.security.get-task-allow`. Sign nested code first and the app last, then verify with `codesign --verify --deep --strict` and smoke-test the signed helpers.
+
+Submit the final signed DMG with `xcrun notarytool submit PATH_TO_DMG --keychain-profile crowline`. Only an **Accepted** result is a completed notarization. Staple and validate its ticket with `xcrun stapler staple PATH_TO_DMG` and `xcrun stapler validate PATH_TO_DMG`, then mount the image and check the contained app with `spctl --assess --type execute --verbose=2 PATH_TO_APP`. Generate the final checksum after stapling. Keep test installers under ignored `artifacts/`; a local handoff does not publish a GitHub release.
+
+Local verification on 2026-10-02: the Apple Silicon test DMG received Apple notarization status **Accepted**. Staple validation succeeded, and both the DMG and its contained app passed Gatekeeper assessment as **Notarized Developer ID**. This does not enable automatic updates or validate Windows distribution.
+
 ## Updater design
 
 crowline's updater accepts releases only from

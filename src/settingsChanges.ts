@@ -49,6 +49,11 @@ export const settingsChangeSchema = z.discriminatedUnion("kind", [
     selected: z.boolean(),
   }),
   z.object({
+    kind: z.literal("targets"),
+    targets: z.array(targetSchema).min(1).max(500),
+    selected: z.boolean(),
+  }),
+  z.object({
     kind: z.literal("accountAlias"),
     connectionId: key,
     alias: z.string().trim().min(1).max(80).nullable(),
@@ -71,6 +76,8 @@ export function settingsChangeKey(change: SettingsChange): string {
         .join("|")}`;
     case "target":
       return `target:${targetKey(change.target)}`;
+    case "targets":
+      return `targets:${change.targets.map(targetKey).sort().join("|")}`;
     case "accountAlias":
       return `accountAlias:${change.connectionId}`;
     default:
@@ -83,6 +90,8 @@ export function affectedSettingsKeys(change: SettingsChange): string[] {
     return change.rules.map((rule) => `notificationRules:${rule.targetKey}`);
   if (change.kind === "panel")
     return Object.keys(change.patch).map((field) => `panel:${field}`);
+  if (change.kind === "targets")
+    return change.targets.map((target) => `target:${targetKey(target)}`);
   return [settingsChangeKey(change)];
 }
 
@@ -200,6 +209,42 @@ export function applySettingsChange(
             change.target,
           ]
         : settings.targets.filter((target) => targetKey(target) !== key);
+      const keys = new Set(targets.map(targetKey));
+      return {
+        ...settings,
+        targets,
+        panel: {
+          ...panel,
+          hiddenTargets: panel.hiddenTargets.filter((key) => keys.has(key)),
+          pinnedTargets: panel.pinnedTargets.filter((key) => keys.has(key)),
+        },
+        preferences: {
+          ...preferences,
+          notifications: {
+            ...preferences.notifications,
+            rules: preferences.notifications.rules.filter((rule) =>
+              keys.has(rule.targetKey),
+            ),
+          },
+        },
+      };
+    }
+    case "targets": {
+      const changedKeys = new Set(change.targets.map(targetKey));
+      const retained = settings.targets.filter(
+        (target) => !changedKeys.has(targetKey(target)),
+      );
+      const targets = change.selected
+        ? [
+            ...retained,
+            ...change.targets.filter(
+              (target, index, all) =>
+                all.findIndex(
+                  (item) => targetKey(item) === targetKey(target),
+                ) === index,
+            ),
+          ]
+        : retained;
       const keys = new Set(targets.map(targetKey));
       return {
         ...settings,

@@ -189,6 +189,8 @@ export const ja = {
   "connections.targets": "監視対象",
   "connections.searchTargets": "対象を検索",
   "connections.searchByName": "名前で検索",
+  "connections.selectAllVisible": "検索結果をすべて選択",
+  "connections.deselectAllVisible": "検索結果をすべて解除",
   "connections.noTargets":
     "参照できる対象がありません。アカウント、権限、リージョンを確認してください。",
   "connections.verifyFirst":

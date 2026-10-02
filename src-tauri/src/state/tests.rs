@@ -565,6 +565,69 @@ async fn simultaneous_setting_changes_preserve_unrelated_fields() {
 }
 
 #[tokio::test]
+async fn bulk_target_change_preserves_other_targets_and_prunes_references() {
+    let directory = test_directory("bulk-target-change");
+    let state = test_state(&directory);
+    let first = target(LOCAL_GITHUB_ID, "first");
+    let second = target(LOCAL_GITHUB_ID, "second");
+    let third = target(LOCAL_GITHUB_ID, "third");
+    let first_key = first.key();
+    let second_key = second.key();
+    {
+        let mut snapshot = state.snapshot.write().await;
+        snapshot.settings.targets = vec![first.clone(), second.clone(), third.clone()];
+        snapshot.settings.panel.hidden_targets = vec![first_key.clone(), second_key.clone()];
+        snapshot.settings.panel.pinned_targets = vec![first_key, second_key.clone()];
+    }
+
+    let saved = state
+        .change_settings(
+            SettingsChange::Targets {
+                targets: vec![first, second],
+                selected: false,
+            },
+            &NoopPublisher,
+        )
+        .await
+        .expect("bulk deselect targets");
+
+    assert_eq!(saved.targets, vec![third]);
+    assert!(saved.panel.hidden_targets.is_empty());
+    assert!(saved.panel.pinned_targets.is_empty());
+    assert_eq!(state.store.load().await.unwrap(), saved);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn bulk_target_change_over_max_targets_fails_without_partial_update() {
+    let directory = test_directory("bulk-target-max");
+    let state = test_state(&directory);
+    let existing = (0..MAX_TARGETS)
+        .map(|index| target(LOCAL_GITHUB_ID, &format!("existing-{index}")))
+        .collect::<Vec<_>>();
+    state.snapshot.write().await.settings.targets = existing.clone();
+    let additional = target(LOCAL_GITHUB_ID, "additional");
+
+    let error = state
+        .change_settings(
+            SettingsChange::Targets {
+                targets: vec![additional],
+                selected: true,
+            },
+            &NoopPublisher,
+        )
+        .await
+        .expect_err("selection beyond MAX_TARGETS must fail");
+
+    assert_eq!(
+        error,
+        format!("At most {MAX_TARGETS} targets can be selected.")
+    );
+    assert_eq!(state.snapshot().await.settings.targets, existing);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
 async fn setting_changes_reject_unknown_target_and_account_keys() {
     let directory = test_directory("invalid-setting-keys");
     let state = test_state(&directory);

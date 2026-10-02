@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-const MAX_TARGETS: usize = 500;
+pub(crate) const MAX_TARGETS: usize = 500;
 const MAX_ACCOUNTS: usize = 32;
 const MAX_TEXT_LEN: usize = 512;
 
@@ -196,6 +196,10 @@ pub enum SettingsChange {
         target: Target,
         selected: bool,
     },
+    Targets {
+        targets: Vec<Target>,
+        selected: bool,
+    },
     AccountAlias {
         connection_id: String,
         alias: Option<String>,
@@ -250,6 +254,10 @@ impl Settings {
         self.panel
             .pinned_targets
             .retain(|key| target_keys.contains(key));
+        let hidden_before = self.panel.hidden_targets.len();
+        self.panel
+            .hidden_targets
+            .retain(|key| target_keys.contains(key));
         let aliases_before = self.preferences.account_aliases.len();
         let account_ids: HashSet<_> = self
             .accounts
@@ -261,6 +269,7 @@ impl Settings {
             .retain(|connection_id, _| account_ids.contains(connection_id.as_str()));
         rules_before != self.preferences.notifications.rules.len()
             || pins_before != self.panel.pinned_targets.len()
+            || hidden_before != self.panel.hidden_targets.len()
             || aliases_before != self.preferences.account_aliases.len()
     }
 
@@ -675,6 +684,7 @@ mod tests {
     fn pruning_removed_targets_cleans_notification_rules_and_pins() {
         let mut settings = Settings::default();
         settings.panel.pinned_targets = vec!["github:github:local:org/removed".into()];
+        settings.panel.hidden_targets = vec!["github:github:local:org/removed".into()];
         settings.preferences.notifications.rules = vec![crate::preferences::NotificationRule {
             target_key: "github:github:local:org/removed".into(),
             scope: crate::preferences::NotificationScope::Mine,
@@ -683,6 +693,7 @@ mod tests {
         }];
         assert!(settings.prune_target_references());
         assert!(settings.panel.pinned_targets.is_empty());
+        assert!(settings.panel.hidden_targets.is_empty());
         assert!(settings.preferences.notifications.rules.is_empty());
         assert!(settings.validate().is_ok());
     }

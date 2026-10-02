@@ -104,6 +104,57 @@ describe("immediate settings", () => {
     expect(queue.getSnapshot().failures).toEqual({});
   });
 
+  it("applies bulk targets once and preserves targets outside the changed set", () => {
+    const settings = demoSnapshot().settings;
+    const [github, vercel, aws] = settings.targets;
+    const removed = applySettingsChange(settings, {
+      kind: "targets",
+      targets: [github, vercel],
+      selected: false,
+    });
+    expect(removed.targets).toEqual([aws]);
+    const restored = applySettingsChange(removed, {
+      kind: "targets",
+      targets: [github, vercel],
+      selected: true,
+    });
+    expect(restored.targets.map(targetKey)).toEqual(
+      expect.arrayContaining(settings.targets.map(targetKey)),
+    );
+  });
+
+  it("drops overlapping failed bulk target intent after a newer individual choice", async () => {
+    let stored = demoSnapshot().settings;
+    const [github, vercel] = stored.targets;
+    let fail = true;
+    const queue = createSettingsQueue(
+      async (change) => {
+        if (fail) throw new Error("Synthetic failure");
+        stored = applySettingsChange(stored, change);
+        return stored;
+      },
+      async () => stored,
+    );
+    queue.update(stored);
+    await queue.change({
+      kind: "targets",
+      targets: [github, vercel],
+      selected: false,
+    });
+    fail = false;
+    await queue.change({ kind: "target", target: github, selected: true });
+    const failure = Object.values(queue.getSnapshot().failures)[0];
+    expect(failure.change).toEqual({
+      kind: "targets",
+      targets: [vercel],
+      selected: false,
+    });
+    const failureKey = Object.keys(queue.getSnapshot().failures)[0];
+    expect(await queue.retry(failureKey)).toBe(true);
+    expect(stored.targets.map(targetKey)).toContain(targetKey(github));
+    expect(stored.targets.map(targetKey)).not.toContain(targetKey(vercel));
+  });
+
   it("keeps a newer published snapshot when an older IPC response completes", async () => {
     const original = demoSnapshot().settings;
     const response = deferred<Settings>();

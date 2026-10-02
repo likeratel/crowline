@@ -59,7 +59,7 @@ Packages are written to `src-tauri/target/release/bundle/`. Build macOS apps on 
 
 ## Connect accounts
 
-Open **Settings → Connections**, choose a service, connect an account, and select projects to monitor. Settings apply immediately. You can edit an account’s alias beside the account selector.
+Open **Settings → Connections**, choose a service, connect an account, and select projects to monitor. Settings apply immediately. You can edit an account’s alias beside the account selector. Select or deselect all search results at once; hidden matches and other accounts keep their selections.
 
 GitHub and Vercel can reuse local CLI sessions or add separate accounts through browser sign-in. Packaged apps include their CLI tools. AWS uses existing profiles and a selected region; AWS CLI is needed to start SSO sign-in. Other CLI integrations require their official CLI to be installed and signed in.
 
@@ -87,7 +87,7 @@ EAS/Expo, fastlane, Cloudflare Pages/Workers, Firebase, and Supabase are catalog
 
 Choose **Settings → Connections → Bitbucket**, enter your Atlassian email and an [API token](https://support.atlassian.com/bitbucket-cloud/docs/create-an-api-token/) with `read:user:bitbucket`, `read:workspace:bitbucket`, `read:repository:bitbucket`, and `read:pipeline:bitbucket`, then connect and select repositories. No separate CLI is needed. The service display name becomes the default account name; use the pencil to set an alias. **Update token** renews credentials for the same account without removing monitored repositories.
 
-Credentials are stored in the OS credential store, not settings, logs, or installer files. Removing a Bitbucket connection also removes its stored credentials. Repository selection, menu-bar visibility, and project notification rules use the same controls as other services. Pipelines with an unidentified triggerer stay **Unknown** and do not count as **My runs**. Real-account authentication and live Bitbucket calls have not been verified; tests use fictional data.
+Credentials are stored in the OS credential store, not settings, logs, or installer files. Removing a Bitbucket connection also removes its stored credentials. Repository selection, menu-bar visibility, and project notification rules use the same controls as other services. Pipelines with an unidentified triggerer stay **Unknown** and do not count as **My runs**. Recent and active pipeline queries were verified against three already-connected repositories on 2026-10-02. Fresh-account sign-in remains unverified; automated tests use fictional data.
 
 Recent Pipelines are loaded 20 at a time. Active checks query building, pending, paused, and halted states concurrently, up to 50 per state. Repository discovery stops at 1,000 repositories, 50 repository pages, or 10 workspace pages; truncation and partial failures are shown in the UI.
 
@@ -109,7 +109,7 @@ Settings live under the OS application-data directory at `io.crowline.desktop/se
 
 Automatic updates are not configured in the current build. The repository is private, and its release endpoint is not a public update source. See [release engineering](docs/releases.md) before enabling distribution or updates.
 
-Locally verified: macOS Apple Silicon build/startup, GitHub/Vercel panel data, and automated tests with fictional data. Windows runtime, live AWS/Bitbucket access, additional-account browser sign-in, and the latest OS notification banner remain unverified. Dependency findings are recorded in the dated [security review](docs/security-review.md).
+Locally verified: macOS Apple Silicon build/startup, GitHub/Vercel panel data, Bitbucket pipeline queries, and automated tests with fictional data. Windows runtime, live AWS access, additional-account browser sign-in, and the latest OS notification banner remain unverified. Dependency findings are recorded in the dated [security review](docs/security-review.md).
 
 See the [documentation index](docs/README.md) for release, provider, media, and historical review notes.
 

@@ -229,8 +229,16 @@
   font-size: 12px;
   color: var(--muted);
 }
+.target-controls {
+  margin-bottom: var(--space-2);
+}
 .target-search {
   margin-bottom: var(--space-2);
+}
+.target-bulk-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
 }
 .target-list {
   border: 1px solid var(--border);

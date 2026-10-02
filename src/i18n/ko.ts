@@ -185,6 +185,8 @@ export const ko = {
   "connections.targets": "모니터링 대상",
   "connections.searchTargets": "대상 검색",
   "connections.searchByName": "이름으로 검색",
+  "connections.selectAllVisible": "검색 결과 전체 선택",
+  "connections.deselectAllVisible": "검색 결과 전체 해제",
   "connections.noTargets":
     "조회할 수 있는 대상이 없습니다. 계정·권한·리전을 확인해 주세요.",
   "connections.verifyFirst":

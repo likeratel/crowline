@@ -5,6 +5,7 @@ import {
   replaceFailedFields,
 } from "./settingsFailures";
 import {
+  affectedSettingsKeys,
   applySettingsChange,
   settingsChangeKey,
   settingsChangeSchema,
@@ -42,7 +43,14 @@ export function createSettingsQueue(
             base,
           )
         : null,
-      pendingKeys: pending.map((entry) => settingsChangeKey(entry.change)),
+      pendingKeys: [
+        ...new Set(
+          pending.flatMap((entry) => [
+            settingsChangeKey(entry.change),
+            ...affectedSettingsKeys(entry.change),
+          ]),
+        ),
+      ],
       failures,
     };
     listeners.forEach((listener) => listener());

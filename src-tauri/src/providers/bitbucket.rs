@@ -12,6 +12,10 @@ use crate::{
     },
 };
 
+#[path = "bitbucket_pagination.rs"]
+mod pagination;
+use pagination::{parse_cursor, validated_next_page, validated_pipeline_next_page};
+
 const API_ROOT: &str = "https://api.bitbucket.org/2.0/";
 const RESPONSE_CAP: usize = 2 * 1024 * 1024;
 const RECENT_PAGE_SIZE: u32 = 20;
@@ -61,7 +65,7 @@ struct Pipeline {
     target: Option<PipelineTarget>,
     created_on: String,
     completed_on: Option<String>,
-    links: PipelineLinks,
+    links: Option<PipelineLinks>,
 }
 
 #[derive(Deserialize)]
@@ -109,7 +113,7 @@ struct PipelineCommit {
 
 #[derive(Deserialize)]
 struct PipelineLinks {
-    html: Link,
+    html: Option<Link>,
 }
 
 #[derive(Deserialize)]
@@ -342,10 +346,7 @@ async fn pipeline_page(
         &query,
     )?;
     let response: Page<Pipeline> = api.get(url).await?;
-    let next_cursor = validated_next_page(
-        response.next.as_deref(),
-        &["repositories", workspace, repository, "pipelines"],
-    )?;
+    let next_cursor = validated_pipeline_next_page(response.next.as_deref(), target)?;
     let activities = response
         .values
         .into_iter()
@@ -375,11 +376,7 @@ async fn active_status_page(
         ],
     )?;
     let response: Page<Pipeline> = api.get(url).await?;
-    let truncated = validated_next_page(
-        response.next.as_deref(),
-        &["repositories", workspace, repository, "pipelines"],
-    )?
-    .is_some();
+    let truncated = validated_pipeline_next_page(response.next.as_deref(), target)?.is_some();
     Ok((response.values, truncated))
 }
 
@@ -417,7 +414,7 @@ fn pipeline_activity(
                 Ownership::Unknown
             }
         });
-    let url = validate_pipeline_url(&pipeline.links.html.href)?;
+    let url = pipeline_web_url(&pipeline, target)?;
     let title = pipeline
         .target
         .as_ref()
@@ -634,39 +631,6 @@ fn validate_api_url(url: &Url) -> Result<(), String> {
     Ok(())
 }
 
-fn validated_next_page(
-    next: Option<&str>,
-    expected_path: &[&str],
-) -> Result<Option<String>, String> {
-    let Some(next) = next else {
-        return Ok(None);
-    };
-    let url =
-        Url::parse(next).map_err(|_| "Bitbucket returned an invalid pagination URL.".to_owned())?;
-    validate_api_url(&url)?;
-    let expected = api_url(expected_path, &[])?.path().to_owned();
-    if url.path().trim_end_matches('/') != expected.trim_end_matches('/') {
-        return Err("Bitbucket returned pagination for an unexpected API path.".into());
-    }
-    let page = url
-        .query_pairs()
-        .find(|(key, _)| key == "page")
-        .map(|(_, value)| value.into_owned())
-        .ok_or_else(|| "Bitbucket returned pagination without a numeric page.".to_owned())?;
-    parse_cursor(Some(&page)).map(|value| Some(value.to_string()))
-}
-
-fn parse_cursor(cursor: Option<&str>) -> Result<u32, String> {
-    match cursor {
-        None => Ok(1),
-        Some(value) => value
-            .parse::<u32>()
-            .ok()
-            .filter(|value| *value > 0)
-            .ok_or_else(|| "Invalid Bitbucket history cursor.".to_owned()),
-    }
-}
-
 fn validate_segment(value: &str) -> Result<(), String> {
     if value.is_empty()
         || value.len() > 512
@@ -714,6 +678,29 @@ fn validate_user(user: &User) -> Result<(), String> {
 
 fn same_identity(user: &User, credential: &BitbucketCredential) -> bool {
     user.uuid == credential.uuid && user.account_id == credential.account_id
+}
+
+fn pipeline_web_url(pipeline: &Pipeline, target: &Target) -> Result<String, String> {
+    let html = pipeline
+        .links
+        .as_ref()
+        .and_then(|links| links.html.as_ref());
+    if let Some(link) = html {
+        return validate_pipeline_url(&link.href);
+    }
+    validate_target(target)?;
+    let mut url = Url::parse("https://bitbucket.org")
+        .map_err(|_| "The Bitbucket website URL is invalid.".to_owned())?;
+    url.path_segments_mut()
+        .map_err(|_| "The Bitbucket website URL is invalid.".to_owned())?
+        .extend([
+            target.metadata["workspace"].as_str(),
+            target.metadata["repoSlug"].as_str(),
+            "pipelines",
+            "results",
+            &pipeline.build_number.to_string(),
+        ]);
+    validate_pipeline_url(url.as_str())
 }
 
 fn validate_pipeline_url(value: &str) -> Result<String, String> {
@@ -777,128 +764,5 @@ fn failed_discovery(account: &Account, message: String) -> Discovery {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn credential() -> BitbucketCredential {
-        BitbucketCredential {
-            email: "person@example.invalid".into(),
-            token: "token".into(),
-            uuid: "{mine}".into(),
-            account_id: "mine-id".into(),
-            display_name: "Service Person".into(),
-        }
-    }
-
-    fn target() -> Target {
-        Target {
-            id: "workspace/repository".into(),
-            provider: Provider::Bitbucket,
-            connection_id: format!("bitbucket:{}", uuid::Uuid::new_v4()),
-            name: "Repository".into(),
-            description: None,
-            metadata: HashMap::from([
-                ("workspace".into(), "workspace".into()),
-                ("repoSlug".into(), "repository".into()),
-            ]),
-        }
-    }
-
-    #[test]
-    fn maps_unknown_status_and_missing_actor_without_inventing_ownership() {
-        let pipeline: Pipeline = serde_json::from_str(r#"{"uuid":"{pipeline}","build_number":7,"state":{"name":"ALIEN"},"target":{"ref_name":"main","commit":{"message":"Ship"}},"created_on":"2026-09-30T00:00:00Z","links":{"html":{"href":"https://bitbucket.org/workspace/repository/pipelines/results/7"}}}"#).unwrap();
-        let activity = pipeline_activity(pipeline, &target(), &credential()).unwrap();
-        assert_eq!(activity.status, ActivityStatus::Unknown);
-        assert_eq!(activity.actor, None);
-        assert_eq!(activity.ownership, Ownership::Unknown);
-    }
-
-    #[test]
-    fn ownership_uses_uuid_or_account_id_instead_of_display_name() {
-        let pipeline: Pipeline = serde_json::from_str(r#"{"uuid":"{pipeline}","build_number":7,"creator":{"uuid":"{other}","account_id":"mine-id","display_name":"Different Label"},"state":{"name":"COMPLETED","result":{"name":"SUCCESSFUL"}},"created_on":"2026-09-30T00:00:00Z","completed_on":"2026-09-30T00:01:00Z","links":{"html":{"href":"https://bitbucket.org/workspace/repository/pipelines/results/7"}}}"#).unwrap();
-        let activity = pipeline_activity(pipeline, &target(), &credential()).unwrap();
-        assert_eq!(activity.ownership, Ownership::Mine);
-        assert_eq!(activity.actor.as_deref(), Some("Different Label"));
-    }
-
-    #[test]
-    fn cursor_and_remote_next_url_are_strictly_validated() {
-        assert_eq!(parse_cursor(Some("2")).unwrap(), 2);
-        assert!(parse_cursor(Some("0")).is_err());
-        assert!(parse_cursor(Some("2&token=secret")).is_err());
-        assert!(validated_next_page(
-            Some("https://evil.example/2.0/user/workspaces?page=2"),
-            &["user", "workspaces"]
-        )
-        .is_err());
-        assert!(validated_next_page(
-            Some("https://api.bitbucket.org/2.0/repositories/other?page=2"),
-            &["user", "workspaces"]
-        )
-        .is_err());
-        assert_eq!(
-            validated_next_page(
-                Some("https://api.bitbucket.org/2.0/user/workspaces?pagelen=100&page=2"),
-                &["user", "workspaces"]
-            )
-            .unwrap()
-            .as_deref(),
-            Some("2")
-        );
-    }
-
-    #[test]
-    fn in_progress_paused_stage_maps_to_waiting_and_preserves_raw_stage() {
-        let state: PipelineState =
-            serde_json::from_str(r#"{"name":"IN_PROGRESS","stage":{"name":"PAUSED"}}"#).unwrap();
-        assert_eq!(pipeline_status(&state), ActivityStatus::Waiting);
-        assert_eq!(raw_pipeline_status(&state), "IN_PROGRESS:PAUSED");
-    }
-
-    #[test]
-    fn blank_creator_ids_do_not_claim_other_ownership() {
-        let pipeline: Pipeline = serde_json::from_str(r#"{"uuid":"{pipeline}","build_number":7,"creator":{"uuid":" ","account_id":"","display_name":"Label"},"state":{"name":"PENDING"},"created_on":"2026-09-30T00:00:00Z","links":{"html":{"href":"https://bitbucket.org/workspace/repository/pipelines/results/7"}}}"#).unwrap();
-        assert_eq!(
-            pipeline_activity(pipeline, &target(), &credential())
-                .unwrap()
-                .ownership,
-            Ownership::Unknown
-        );
-    }
-
-    #[test]
-    fn paginated_response_requires_values_instead_of_false_empty_success() {
-        assert!(serde_json::from_str::<Page<Repository>>(r#"{"page":1}"#).is_err());
-    }
-
-    #[test]
-    fn active_status_filters_use_supported_api_values() {
-        let statuses = ["BUILDING", "PENDING", "PAUSED", "HALTED"];
-        assert!(!statuses.contains(&"IN_PROGRESS"));
-    }
-    #[test]
-    fn only_custom_selectors_supply_pipeline_names() {
-        for (selector, expected) in [
-            (
-                serde_json::json!({"type":"custom", "pattern":" Deploy production "}),
-                Some("Deploy production"),
-            ),
-            (
-                serde_json::json!({"type":"branches", "pattern":"release/*"}),
-                None,
-            ),
-            (serde_json::json!({"type":"custom", "pattern":" "}), None),
-            (serde_json::Value::Null, None),
-        ] {
-            let pipeline: Pipeline = serde_json::from_value(serde_json::json!({
-                "uuid":"{pipeline}", "build_number":7, "state":{"name":"PENDING"},
-                "target":{"ref_name":"main", "selector":selector, "commit":{"message":"Ship checkout"}},
-                "created_on":"2026-09-30T00:00:00Z",
-                "links":{"html":{"href":"https://bitbucket.org/workspace/repository/pipelines/results/7"}}
-            })).unwrap();
-            let activity = pipeline_activity(pipeline, &target(), &credential()).unwrap();
-            assert_eq!(activity.workflow_name.as_deref(), expected);
-            assert_eq!(activity.title, "Ship checkout");
-        }
-    }
-}
+#[path = "bitbucket_tests.rs"]
+mod tests;

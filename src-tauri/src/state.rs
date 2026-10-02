@@ -15,7 +15,7 @@ use crate::{
     models::{
         Account, AccountMode, Activity, ActivityStatus, Connection, ConnectionStatus, Issue,
         LoginStatus, Ownership, Provider, Scope, Settings, SettingsChange, Snapshot, Target,
-        LOCAL_GITHUB_ID, LOCAL_VERCEL_ID,
+        LOCAL_GITHUB_ID, LOCAL_VERCEL_ID, MAX_TARGETS,
     },
     notifications::{NativeNotification, NotificationEngine},
     providers::aws,
@@ -556,6 +556,31 @@ fn apply_settings_change(
             settings.targets.retain(|item| item.key() != key);
             if selected {
                 settings.targets.push(target);
+            }
+        }
+        SettingsChange::Targets { targets, selected } => {
+            if targets.is_empty() || targets.len() > MAX_TARGETS {
+                return Err(format!(
+                    "Bulk target changes must contain between 1 and {MAX_TARGETS} targets."
+                ));
+            }
+            let changed_keys = targets
+                .iter()
+                .map(Target::key)
+                .collect::<std::collections::HashSet<_>>();
+            settings
+                .targets
+                .retain(|item| !changed_keys.contains(&item.key()));
+            if selected {
+                for target in targets {
+                    if !settings
+                        .targets
+                        .iter()
+                        .any(|item| item.key() == target.key())
+                    {
+                        settings.targets.push(target);
+                    }
+                }
             }
         }
         SettingsChange::AccountAlias {
