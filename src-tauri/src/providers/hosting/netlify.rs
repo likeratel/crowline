@@ -303,6 +303,7 @@ fn map_deploy(
         provider: Provider::Netlify,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: None,
         kind: row.context.unwrap_or_else(|| "deploy".into()),
         title: row
             .title

@@ -1,5 +1,7 @@
 # Mobile provider capability notes
 
+Investigation baseline: 2026-09-30. These are crowline integration constraints at that date, not claims that the platforms have no APIs. Current supported integrations are listed in the [README](../README.md#supported-monitoring).
+
 This investigation covers EAS/Expo, Firebase Hosting and App Hosting, Supabase Edge Functions, and fastlane. The implementation reuses installed local CLI sessions and performs read-only probes only. It does not extract tokens, evaluate a user's project configuration, run project scripts, or turn a current resource state into invented deployment history.
 
 ## Support result

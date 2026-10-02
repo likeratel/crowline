@@ -562,6 +562,8 @@ pub struct Activity {
     pub target_id: String,
     pub kind: String,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_name: Option<String>,
     pub project: String,
     pub branch: Option<String>,
     pub url: String,

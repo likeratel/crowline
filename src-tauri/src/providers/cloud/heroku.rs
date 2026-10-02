@@ -213,6 +213,7 @@ fn map_release(
         provider: PROVIDER,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: None,
         kind: "release".into(),
         title: format!("v{} {}", release.version, release.description),
         project: app.into(),

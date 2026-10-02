@@ -248,6 +248,7 @@ fn map_job(
         provider: AWS_PROVIDER,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: None,
         kind: "amplify".into(),
         title: format!("Amplify {} job {}", job.job_type().as_str(), job.job_id()),
         project: app_name.into(),

@@ -377,6 +377,7 @@ fn map_deployment(row: DeploymentRow, target: &Target) -> Result<Activity, CliEr
         provider: Provider::Railway,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: None,
         kind: target
             .metadata
             .get("environmentName")

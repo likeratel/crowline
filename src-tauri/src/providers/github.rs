@@ -496,15 +496,20 @@ fn map_run(run: WorkflowRun, target: &Target, account: Option<&str>) -> Result<A
     let status = github_status(&run.status, run.conclusion.as_deref())?;
     let started_at = run.run_started_at.unwrap_or(run.created_at);
     let finished_at = (run.status == "completed").then(|| run.updated_at.to_rfc3339());
+    let workflow_name = run
+        .name
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty());
     Ok(Activity {
         id: format!("github:{}:{}", run.id, run.run_attempt),
         provider: Provider::Github,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: workflow_name.clone(),
         kind: run.event,
         title: run
             .display_title
-            .or(run.name)
+            .or(workflow_name)
             .unwrap_or_else(|| "GitHub Actions run".into()),
         project: target.id.clone(),
         branch: run.head_branch,
@@ -749,6 +754,8 @@ mod tests {
         )
         .expect("map run");
         assert_eq!(activity.id, "github:44:3");
+        assert_eq!(activity.title, "Release");
+        assert_eq!(activity.workflow_name.as_deref(), Some("Deploy"));
         assert_eq!(activity.status, ActivityStatus::Running);
         assert_eq!(activity.started_at, "2026-09-29T01:02:03+00:00");
         assert_eq!(activity.ownership, Ownership::Mine);

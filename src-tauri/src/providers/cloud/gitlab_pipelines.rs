@@ -85,6 +85,7 @@ fn map(row: Pipeline, target: &Target, path: &str) -> Result<Activity, CliError>
         provider: target.provider,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: crate::providers::execution_name(row.name.as_deref()),
         kind: "pipeline".into(),
         title: row
             .name
@@ -119,6 +120,8 @@ mod tests {
         let row:Pipeline=serde_json::from_str(r#"{"id":7,"status":"failed","ref":"main","created_at":"2026-09-29T01:00:00Z","updated_at":"2026-09-29T01:01:00Z","name":"fastlane release"}"#).unwrap();
         let a = map(row, &t, "sample/mobile").unwrap();
         assert_eq!(a.status, ActivityStatus::Failed);
+        assert_eq!(a.workflow_name.as_deref(), Some("fastlane release"));
+        assert_eq!(a.title, "fastlane release");
         assert_eq!(a.ownership, Ownership::Unknown);
         assert_eq!(a.finished_at, None);
         assert_eq!(a.url, "https://gitlab.com/sample/mobile/-/pipelines/7");

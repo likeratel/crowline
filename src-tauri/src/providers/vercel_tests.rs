@@ -181,3 +181,68 @@ fn synthetic_deployment_response_parses_and_rejects_untrusted_console_link() {
     assert_eq!(activity.ownership, Ownership::Mine);
     assert_eq!(activity.url, "https://vercel.com/demo-team/rocket/dpl_456");
 }
+
+#[test]
+fn deployment_names_preserve_commit_subjects_for_supported_git_metadata() {
+    for (message_key, ref_key) in [
+        ("githubCommitMessage", "githubCommitRef"),
+        ("gitlabCommitMessage", "gitlabCommitRef"),
+        ("bitbucketCommitMessage", "bitbucketCommitRef"),
+        ("gitCommitMessage", "gitCommitRef"),
+    ] {
+        let deployment: Deployment = serde_json::from_value(serde_json::json!({
+            "uid": "dpl_example", "name": "orbit-web", "created": 1700000000000_i64,
+            "state": "BUILDING", "meta": { (message_key): "  Ship checkout  \n\nLong commit body", (ref_key): "release" }
+        })).unwrap();
+        let activity = map_deployment(
+            deployment,
+            &target(),
+            VerifiedIdentity {
+                uid: None,
+                username: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(activity.workflow_name.as_deref(), Some("orbit-web"));
+        assert_eq!(activity.title, "Ship checkout");
+        assert_eq!(activity.branch.as_deref(), Some("release"));
+    }
+}
+
+#[test]
+fn deployment_title_falls_back_without_failing_on_missing_or_nontext_metadata() {
+    for meta in [
+        serde_json::json!({}),
+        serde_json::json!({"githubCommitMessage": " ", "gitlabCommitMessage": 42}),
+    ] {
+        let deployment: Deployment = serde_json::from_value(serde_json::json!({
+            "uid": "dpl_example", "name": "orbit-web", "created": 1700000000000_i64,
+            "state": "BUILDING", "meta": meta
+        }))
+        .unwrap();
+        let activity = map_deployment(
+            deployment,
+            &target(),
+            VerifiedIdentity {
+                uid: None,
+                username: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(activity.title, "orbit-web");
+        assert_eq!(activity.workflow_name.as_deref(), Some("orbit-web"));
+    }
+    assert_eq!(
+        deployment_meta_text(
+            &HashMap::from([
+                ("githubCommitMessage".into(), serde_json::json!(" ")),
+                (
+                    "gitlabCommitMessage".into(),
+                    serde_json::json!("Fallback subject")
+                ),
+            ]),
+            &["githubCommitMessage", "gitlabCommitMessage"]
+        ),
+        Some("Fallback subject".into())
+    );
+}

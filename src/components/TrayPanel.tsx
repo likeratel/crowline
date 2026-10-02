@@ -38,6 +38,9 @@ function RunRow({
   onError: (message: string) => void;
 }) {
   const { locale, t } = useI18n();
+  const workflow = item.workflowName?.trim();
+  const showWorkflow = Boolean(workflow && workflow !== item.title.trim());
+  const heading = showWorkflow ? `${workflow} · ${item.title}` : item.title;
   const actor = item.actor?.trim() || t("common.unknownActor");
   const context = [item.project, item.branch].filter(Boolean).join(" · ");
   const Icon =
@@ -77,7 +80,15 @@ function RunRow({
         />
       </span>
       <span className="panel-run-copy">
-        <span className="panel-run-title">{item.title}</span>
+        <span className="panel-run-heading" title={heading}>
+          {showWorkflow && (
+            <>
+              <span className="panel-run-workflow">{workflow}</span>
+              <span aria-hidden="true"> · </span>
+            </>
+          )}
+          <span className="panel-run-title">{item.title}</span>
+        </span>
         <span className="panel-run-meta">
           <span className="panel-run-context" title={context}>
             {context}

@@ -168,6 +168,7 @@ fn map(
         provider: target.provider,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: None,
         kind: deployment.environment.clone(),
         title: deployment
             .description

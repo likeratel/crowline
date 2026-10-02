@@ -91,7 +91,15 @@ struct PipelineResult {
 #[derive(Deserialize)]
 struct PipelineTarget {
     ref_name: Option<String>,
+    selector: Option<PipelineSelector>,
     commit: Option<PipelineCommit>,
+}
+
+#[derive(Deserialize)]
+struct PipelineSelector {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    pattern: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -431,6 +439,12 @@ fn pipeline_activity(
         provider: Provider::Bitbucket,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: pipeline
+            .target
+            .as_ref()
+            .and_then(|target| target.selector.as_ref())
+            .filter(|selector| selector.kind.as_deref() == Some("custom"))
+            .and_then(|selector| super::execution_name(selector.pattern.as_deref())),
         kind: "pipeline".into(),
         title,
         project: target.name.clone(),
@@ -861,5 +875,30 @@ mod tests {
     fn active_status_filters_use_supported_api_values() {
         let statuses = ["BUILDING", "PENDING", "PAUSED", "HALTED"];
         assert!(!statuses.contains(&"IN_PROGRESS"));
+    }
+    #[test]
+    fn only_custom_selectors_supply_pipeline_names() {
+        for (selector, expected) in [
+            (
+                serde_json::json!({"type":"custom", "pattern":" Deploy production "}),
+                Some("Deploy production"),
+            ),
+            (
+                serde_json::json!({"type":"branches", "pattern":"release/*"}),
+                None,
+            ),
+            (serde_json::json!({"type":"custom", "pattern":" "}), None),
+            (serde_json::Value::Null, None),
+        ] {
+            let pipeline: Pipeline = serde_json::from_value(serde_json::json!({
+                "uuid":"{pipeline}", "build_number":7, "state":{"name":"PENDING"},
+                "target":{"ref_name":"main", "selector":selector, "commit":{"message":"Ship checkout"}},
+                "created_on":"2026-09-30T00:00:00Z",
+                "links":{"html":{"href":"https://bitbucket.org/workspace/repository/pipelines/results/7"}}
+            })).unwrap();
+            let activity = pipeline_activity(pipeline, &target(), &credential()).unwrap();
+            assert_eq!(activity.workflow_name.as_deref(), expected);
+            assert_eq!(activity.title, "Ship checkout");
+        }
     }
 }

@@ -1,4 +1,14 @@
-# Signed desktop releases
+# Desktop release engineering
+
+## Current distribution
+
+The repository is private. Local builds and direct file handoff work without a GitHub release. No App Store distribution or production update service is configured. The current app has no updater public key, so automatic updates are unavailable.
+
+The workflow below is retained for future release engineering. Do not publish a release as part of a private test handoff. The configured GitHub Releases endpoint does not provide anonymous access to this private repository, and crowline does not attach repository credentials to updater requests. Enabling a signing key alone will not make this endpoint usable by testers. A future distribution channel needs a reachable update source or its own update mechanism.
+
+For local app and installer builds, use the [README build commands](../README.md#build). Apple/Windows signing and notarization are separate from Tauri updater signing.
+
+## Updater design
 
 crowline's updater accepts releases only from
 `https://github.com/likeratel/crowline/releases/latest/download/latest.json` and verifies every

@@ -409,3 +409,51 @@ test("panel shows actors alongside long project names and marks missing actors",
     ),
   ).toBe(true);
 });
+
+test("panel preserves workflow names without repeating titles or overflowing", async ({
+  page,
+}) => {
+  await page.route(/\/src\/bridge\.ts(?:\?.*)?$/, async (route) => {
+    const response = await route.fetch();
+    const source = await response.text();
+    const marker = "let preview = demoSnapshot();";
+    expect(source).toContain(marker);
+    await route.fulfill({
+      response,
+      body: source.replace(
+        marker,
+        `${marker}
+      preview = { ...preview, activities: preview.activities.map((item) => ({
+        ...item,
+        workflowName: item.id === "g1" ? "Deploy production workflow with a very long name" : item.id === "g2" ? item.title : null,
+      })) };
+    `,
+      ),
+    });
+  });
+  await page.goto("/");
+  const row = page
+    .locator(".panel-run")
+    .filter({ has: page.locator(".panel-run-workflow") });
+  await expect(row).toHaveCount(1);
+  await expect(row.locator(".panel-run-workflow")).toHaveText(
+    "Deploy production workflow with a very long name",
+  );
+  await expect(row.locator(".panel-run-title")).toHaveText("Deploy production");
+  await expect(row.locator(".panel-run-heading")).toHaveAttribute(
+    "title",
+    "Deploy production workflow with a very long name · Deploy production",
+  );
+  await expect(row.locator(".panel-run-actor")).toContainText("alex");
+  const duplicate = page.locator(".panel-run").filter({
+    has: page.locator(".panel-run-title", { hasText: "Test & typecheck" }),
+  });
+  await expect(duplicate).toHaveCount(1);
+  await expect(duplicate.locator(".panel-run-workflow")).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({ path: "artifacts/crowline-panel-workflow.png" });
+});

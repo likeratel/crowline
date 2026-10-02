@@ -98,6 +98,7 @@ mod tests {
             provider: Provider::Vercel,
             connection_id: "vercel:local".into(),
             target_id: "prj_demo".into(),
+            workflow_name: None,
             kind: "preview".into(),
             title: "Demo".into(),
             project: "demo".into(),

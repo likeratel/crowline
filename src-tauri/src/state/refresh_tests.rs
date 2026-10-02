@@ -20,6 +20,7 @@ fn activity(target: &Target, id: &str, status: ActivityStatus) -> Activity {
         provider: target.provider,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: None,
         kind: "workflow".into(),
         title: "Deploy".into(),
         project: target.name.clone(),

@@ -1,5 +1,7 @@
 # Source and distribution review
 
+> Historical review of the revision dated below. This is not a security assessment of later adapters, Bitbucket credentials, or the current dependency set. See the [README](../README.md) for current verification limits.
+
 Review date: 2026-09-29. This records a bounded review of the current source and local history, not a security certification. No release has been published.
 
 ## Authentication and correctness fixes

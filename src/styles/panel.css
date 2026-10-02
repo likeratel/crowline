@@ -178,7 +178,23 @@
   min-width: 0;
   gap: 4px;
 }
+.panel-run-heading {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 4px;
+  font-size: 12px;
+}
+.panel-run-workflow {
+  flex-shrink: 0;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
 .panel-run-title {
+  min-width: 0;
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;

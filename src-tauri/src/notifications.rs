@@ -393,8 +393,80 @@ fn localize(activity: &Activity, language: Language) -> NativeNotification {
         _ => unreachable!("only notifiable statuses are localized"),
     };
     NativeNotification {
-        title: title.into(),
-        body: format!("{} — {}", activity.project, activity.title),
+        title: format!("{} · {title}", provider_label(activity.provider)),
+        body: notification_body(activity, language),
+    }
+}
+
+fn notification_body(activity: &Activity, language: Language) -> String {
+    let title = notification_text(&activity.title);
+    let workflow = activity
+        .workflow_name
+        .as_deref()
+        .map(notification_text)
+        .filter(|name| !name.is_empty() && name != &title);
+    let heading = [workflow.as_deref(), Some(title.as_str())]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let unknown_actor = match language {
+        Language::Korean => "실행자 미확인",
+        Language::Japanese => "実行者不明",
+        Language::SimplifiedChinese => "执行者未知",
+        _ => "Unknown actor",
+    };
+    let actor = activity
+        .actor
+        .as_deref()
+        .map(notification_text)
+        .filter(|actor| !actor.is_empty())
+        .unwrap_or_else(|| unknown_actor.into());
+    let context = [
+        Some(activity.project.as_str()),
+        activity.branch.as_deref(),
+        Some(actor.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    .map(notification_text)
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join(" · ");
+    [heading, context]
+        .into_iter()
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn notification_text(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn provider_label(provider: Provider) -> &'static str {
+    match provider {
+        Provider::Github => "GitHub Actions",
+        Provider::Vercel => "Vercel",
+        Provider::Aws => "AWS",
+        Provider::GithubDeployments => "GitHub Deployments",
+        Provider::Railway => "Railway",
+        Provider::Netlify => "Netlify",
+        Provider::Render => "Render",
+        Provider::CloudflarePages => "Cloudflare Pages",
+        Provider::CloudflareWorkers => "Cloudflare Workers",
+        Provider::Heroku => "Heroku",
+        Provider::Fly => "Fly.io",
+        Provider::Gitlab => "GitLab",
+        Provider::Bitbucket => "Bitbucket",
+        Provider::Digitalocean => "DigitalOcean",
+        Provider::Gcloud => "Google Cloud",
+        Provider::Azure => "Azure App Service",
+        Provider::Eas => "Expo / EAS",
+        Provider::Firebase => "Firebase",
+        Provider::Supabase => "Supabase",
+        Provider::Fastlane => "fastlane",
     }
 }
 

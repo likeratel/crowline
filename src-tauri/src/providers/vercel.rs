@@ -663,11 +663,25 @@ fn map_deployment(
         .as_ref()
         .and_then(|creator| creator.username.clone().or_else(|| creator.uid.clone()));
     let ownership = deployment_ownership(deployment.creator.as_ref(), identity);
-    let branch = deployment
-        .meta
-        .get("githubCommitRef")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned);
+    let branch = deployment_meta_text(
+        &deployment.meta,
+        &[
+            "githubCommitRef",
+            "gitlabCommitRef",
+            "bitbucketCommitRef",
+            "gitCommitRef",
+        ],
+    );
+    let title = deployment_meta_text(
+        &deployment.meta,
+        &[
+            "githubCommitMessage",
+            "gitlabCommitMessage",
+            "bitbucketCommitMessage",
+            "gitCommitMessage",
+        ],
+    )
+    .unwrap_or_else(|| deployment.name.clone());
     let url = deployment
         .inspector_url
         .filter(|url| is_trusted_vercel_url(url))
@@ -681,8 +695,9 @@ fn map_deployment(
         provider: Provider::Vercel,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: super::execution_name(Some(&deployment.name)),
         kind: deployment.target.unwrap_or_else(|| "preview".into()),
-        title: deployment.name,
+        title,
         project: target.name.clone(),
         branch,
         url,
@@ -693,6 +708,18 @@ fn map_deployment(
         started_at: created.to_rfc3339(),
         finished_at,
         updated_at: terminal_time.unwrap_or(created).to_rfc3339(),
+    })
+}
+
+fn deployment_meta_text(
+    meta: &HashMap<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<String> {
+    keys.iter().find_map(|key| {
+        meta.get(*key)
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| value.lines().map(str::trim).find(|line| !line.is_empty()))
+            .map(str::to_owned)
     })
 }
 

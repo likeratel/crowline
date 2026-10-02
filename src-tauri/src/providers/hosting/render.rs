@@ -349,6 +349,7 @@ fn map_deploy(row: DeployRow, target: &Target) -> Result<Activity, CliError> {
         provider: Provider::Render,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: None,
         kind: target
             .metadata
             .get("serviceType")

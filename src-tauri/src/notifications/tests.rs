@@ -21,6 +21,7 @@ fn activity(id: &str, status: ActivityStatus, ownership: Ownership) -> Activity 
         provider: Provider::Github,
         connection_id: "github:local".into(),
         target_id: "org/app".into(),
+        workflow_name: None,
         kind: "workflow".into(),
         title: "Deploy production".into(),
         project: "Example App".into(),
@@ -607,4 +608,94 @@ fn failed_delivery_remains_pending_and_successful_ack_deduplicates() {
     assert_eq!(retry.len(), 1);
     engine.acknowledge(&retry[0]);
     assert!(observe(&mut engine, &selected, &[failed], &prefs, 4).is_empty());
+}
+
+#[test]
+fn notification_includes_service_execution_and_actor_context() {
+    let run = Activity {
+        provider: Provider::Vercel,
+        workflow_name: Some("orbit-web".into()),
+        title: "Ship checkout".into(),
+        project: "Orbit".into(),
+        branch: Some("main".into()),
+        actor: Some("alex".into()),
+        ..activity("run", ActivityStatus::Success, Ownership::Mine)
+    };
+    let notification = localize(&run, Language::Korean);
+    assert_eq!(notification.title, "Vercel · 배포 성공");
+    assert_eq!(
+        notification.body,
+        "orbit-web · Ship checkout\nOrbit · main · alex"
+    );
+}
+
+#[test]
+fn notification_omits_duplicate_and_missing_execution_names() {
+    for name in [None, Some("  "), Some(" Deploy production ")] {
+        let run = Activity {
+            workflow_name: name.map(str::to_owned),
+            branch: Some(" ".into()),
+            actor: Some(" ".into()),
+            ..activity("run", ActivityStatus::Failed, Ownership::Unknown)
+        };
+        let notification = localize(&run, Language::English);
+        assert_eq!(notification.title, "GitHub Actions · Deployment failed");
+        assert_eq!(
+            notification.body,
+            "Deploy production\nExample App · Unknown actor"
+        );
+    }
+}
+
+#[test]
+fn notification_unknown_actor_follows_language_and_outcome() {
+    for (language, status, label, actor) in [
+        (
+            Language::Korean,
+            ActivityStatus::Success,
+            "배포 성공",
+            "실행자 미확인",
+        ),
+        (
+            Language::English,
+            ActivityStatus::Failed,
+            "Deployment failed",
+            "Unknown actor",
+        ),
+        (
+            Language::Japanese,
+            ActivityStatus::Canceled,
+            "デプロイ中止",
+            "実行者不明",
+        ),
+        (
+            Language::SimplifiedChinese,
+            ActivityStatus::Success,
+            "部署成功",
+            "执行者未知",
+        ),
+    ] {
+        let notification = localize(&activity("run", status, Ownership::Unknown), language);
+        assert_eq!(notification.title, format!("GitHub Actions · {label}"));
+        assert_eq!(
+            notification.body,
+            format!("Deploy production\nExample App · {actor}")
+        );
+    }
+}
+
+#[test]
+fn notification_keeps_external_multiline_text_within_two_body_lines() {
+    let run = Activity {
+        workflow_name: Some("  Deploy\nproduction ".into()),
+        title: "Deploy production".into(),
+        branch: Some("release\nnext".into()),
+        actor: Some(" alex\tdev ".into()),
+        ..activity("run", ActivityStatus::Canceled, Ownership::Mine)
+    };
+    let notification = localize(&run, Language::Korean);
+    assert_eq!(
+        notification.body,
+        "Deploy production\nExample App · release next · alex dev"
+    );
 }

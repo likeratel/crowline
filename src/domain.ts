@@ -128,6 +128,7 @@ export const activitySchema = z.object({
   provider: providerSchema,
   kind: z.string(),
   title: z.string(),
+  workflowName: optionalText,
   project: z.string(),
   branch: optionalText,
   url: z.string(),

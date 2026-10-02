@@ -40,6 +40,7 @@ fn activity(connection_id: &str, project: &str) -> Activity {
         provider: Provider::Github,
         connection_id: connection_id.into(),
         target_id: format!("org/{project}"),
+        workflow_name: None,
         kind: "push".into(),
         title: "Deploy".into(),
         project: project.into(),

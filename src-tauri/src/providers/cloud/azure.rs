@@ -360,6 +360,7 @@ fn map_deployment(
         provider: PROVIDER,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: None,
         kind: "app-service-deployment".into(),
         title,
         project: app.into(),

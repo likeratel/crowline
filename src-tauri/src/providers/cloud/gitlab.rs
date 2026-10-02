@@ -59,6 +59,7 @@ struct Environment {
 
 #[derive(Deserialize)]
 struct Deployable {
+    name: Option<String>,
     finished_at: Option<String>,
     commit: Option<Commit>,
     pipeline: Option<Pipeline>,
@@ -302,6 +303,10 @@ fn map_deployment(
         provider: PROVIDER,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: deployment
+            .deployable
+            .as_ref()
+            .and_then(|job| crate::providers::execution_name(job.name.as_deref())),
         kind: format!("deployment:{}", deployment.environment.name),
         title,
         project: path.into(),
@@ -361,7 +366,7 @@ mod tests {
           "id": 41, "status": "success", "ref": "main", "sha": "abc123",
           "created_at": "2026-09-28T07:36:40.222Z", "updated_at": "2026-09-28T07:38:12.414Z",
           "user": {"username": "example-user"}, "environment": {"name": "production"},
-          "deployable": {"finished_at": "2026-09-28T07:38:10Z", "commit": {"title": "Ship rocket"}, "pipeline": {"id": 36}}
+          "deployable": {"name": "deploy-production", "finished_at": "2026-09-28T07:38:10Z", "commit": {"title": "Ship rocket"}, "pipeline": {"id": 36}}
         } ]"#;
         let deployments: Vec<Deployment> = serde_json::from_str(fixture).expect("fixture");
         let mut issues = Vec::new();
@@ -378,6 +383,7 @@ mod tests {
         assert_eq!(activity.branch.as_deref(), Some("main"));
         assert!(!target().metadata.contains_key("current_user"));
         assert_eq!(activity.title, "Ship rocket (pipeline #36)");
+        assert_eq!(activity.workflow_name.as_deref(), Some("deploy-production"));
         assert!(activity.url.starts_with("https://gitlab.com/"));
         assert!(issues.is_empty());
     }

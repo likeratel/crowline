@@ -476,6 +476,7 @@ fn map_revision(
         provider: PROVIDER,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: None,
         kind: "cloud-run-revision".into(),
         title: revision.metadata.name.clone(),
         project: format!("{project}/{service}"),
@@ -541,6 +542,9 @@ fn map_build(
         provider: PROVIDER,
         connection_id: target.connection_id.clone(),
         target_id: target.id.clone(),
+        workflow_name: crate::providers::execution_name(
+            build.substitutions.get("TRIGGER_NAME").map(String::as_str),
+        ),
         kind: "cloud-build".into(),
         title,
         project: project.into(),
@@ -629,7 +633,7 @@ mod tests {
         let fixture = r#"{
           "id":"build-123", "projectId":"example-project", "status":"WORKING",
           "createTime":"2026-09-28T10:00:00Z", "startTime":"2026-09-28T10:00:05Z",
-          "buildTriggerId":"trigger-1", "substitutions":{"BRANCH_NAME":"main"}
+          "buildTriggerId":"trigger-1", "substitutions":{"BRANCH_NAME":"main", "TRIGGER_NAME":"deploy-production"}
         }"#;
         let build: Build = serde_json::from_str(fixture).expect("fixture");
         let mut issues = Vec::new();
@@ -641,6 +645,7 @@ mod tests {
         )
         .expect("activity");
         assert_eq!(activity.status, ActivityStatus::Running);
+        assert_eq!(activity.workflow_name.as_deref(), Some("deploy-production"));
         assert_eq!(activity.ownership, Ownership::Unknown);
         assert!(activity
             .url

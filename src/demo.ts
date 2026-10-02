@@ -65,6 +65,14 @@ function activity(
     targetId: DEMO_TARGETS.find((target) => target.provider === provider)?.id,
     connectionId: provider === "aws" ? "aws:development" : `${provider}:local`,
     title,
+    workflowName:
+      provider === "github"
+        ? id === "g2"
+          ? "CI"
+          : "Deploy"
+        : provider === "vercel"
+          ? "orbit-web"
+          : null,
     status,
     ownership,
     kind: provider === "github" ? "workflow" : "deployment",
