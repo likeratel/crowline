@@ -1,73 +1,182 @@
-name: Build signed desktop release
+name: Build signed validation draft
 
 on:
   workflow_dispatch:
+    inputs:
+      release_scope:
+        description: Platform installers to sign and add to the private validation draft
+        required: true
+        type: choice
+        default: macos
+        options:
+          - macos
+          - windows
+          - macos-and-windows
+
+concurrency:
+  group: crowline-release
+  cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  preflight:
+    name: Validate release configuration
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.preflight.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22.23.3
+
+      - name: Test release validation scripts
+        run: node --test scripts/release-scripts.test.mjs
+
+      - id: preflight
+        name: Require selected-platform signing configuration
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          CROWLINE_UPDATER_PUBLIC_KEY: ${{ vars.CROWLINE_UPDATER_PUBLIC_KEY }}
+          APPLE_CERTIFICATE: ${{ contains(inputs.release_scope, 'macos') && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ contains(inputs.release_scope, 'macos') && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ contains(inputs.release_scope, 'macos') && vars.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_TEAM_ID: ${{ contains(inputs.release_scope, 'macos') && vars.APPLE_TEAM_ID || '' }}
+          APPLE_API_ISSUER: ${{ contains(inputs.release_scope, 'macos') && vars.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY: ${{ contains(inputs.release_scope, 'macos') && vars.APPLE_API_KEY || '' }}
+          APPLE_API_PRIVATE_KEY: ${{ contains(inputs.release_scope, 'macos') && secrets.APPLE_API_PRIVATE_KEY || '' }}
+          WINDOWS_CERTIFICATE: ${{ contains(inputs.release_scope, 'windows') && secrets.WINDOWS_CERTIFICATE || '' }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ contains(inputs.release_scope, 'windows') && secrets.WINDOWS_CERTIFICATE_PASSWORD || '' }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ contains(inputs.release_scope, 'windows') && vars.WINDOWS_CERTIFICATE_THUMBPRINT || '' }}
+          WINDOWS_TIMESTAMP_URL: ${{ contains(inputs.release_scope, 'windows') && vars.WINDOWS_TIMESTAMP_URL || '' }}
+        run: >-
+          node scripts/release-preflight.mjs
+          --scope "${{ inputs.release_scope }}"
+          --github-output "$GITHUB_OUTPUT"
+
   release:
     name: ${{ matrix.name }}
+    needs: preflight
+    permissions:
+      contents: write
     runs-on: ${{ matrix.runner }}
     strategy:
-      fail-fast: false
+      fail-fast: true
       max-parallel: 1
-      matrix:
-        include:
-          - name: macOS Intel
-            runner: macos-15-intel
-            target: x86_64-apple-darwin
-            args: --target x86_64-apple-darwin
-          - name: macOS Apple Silicon
-            runner: macos-15
-            target: aarch64-apple-darwin
-            args: --target aarch64-apple-darwin
-          - name: Windows x64
-            runner: windows-2022
-            target: x86_64-pc-windows-msvc
-            args: --target x86_64-pc-windows-msvc
+      matrix: ${{ fromJSON(needs.preflight.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 10.30.2
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22.23.3
           cache: pnpm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
+          toolchain: 1.94.1
           targets: ${{ matrix.target }}
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version: '1.26.8'
-          cache: false
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Prepare checksum-verified bundled tools
-        run: pnpm tools:prepare
+      - name: Prepare fail-closed release configuration
+        env:
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ vars.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+        run: >-
+          node scripts/release-config.mjs
+          --platform "${{ matrix.platform }}"
+          --output .release/tauri.release.conf.json
 
-      - name: Build signed draft release
-        uses: tauri-apps/tauri-action@v1
+      - name: Prepare Apple notarization key
+        if: matrix.platform == 'macos'
+        shell: bash
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/crowline-notary-key.p8"
+          umask 077
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$key_path"
+          printf 'APPLE_API_KEY_PATH=%s\n' "$key_path" >> "$GITHUB_ENV"
+
+      - name: Import Windows code-signing certificate
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ vars.WINDOWS_CERTIFICATE_THUMBPRINT }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'crowline-code-signing.pfx'
+          $expected = ($env:WINDOWS_CERTIFICATE_THUMBPRINT -replace '\s', '').ToUpperInvariant()
+          try {
+            $bytes = [Convert]::FromBase64String(($env:WINDOWS_CERTIFICATE -replace '\s', ''))
+            [IO.File]::WriteAllBytes($certificatePath, $bytes)
+            $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+            $imported = @(Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password)
+            $matching = @($imported | Where-Object { ($_.Thumbprint -replace '\s', '').ToUpperInvariant() -eq $expected })
+            if ($matching.Count -ne 1) {
+              throw 'The imported PFX did not contain the configured code-signing certificate.'
+            }
+          } finally {
+            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Build, sign, notarize, verify, and upload validation draft
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           CROWLINE_UPDATER_PUBLIC_KEY: ${{ vars.CROWLINE_UPDATER_PUBLIC_KEY }}
+          CROWLINE_RELEASE_PLATFORM: ${{ matrix.platform }}
           CROWLINE_RELEASE_TARGET: ${{ matrix.target }}
+          APPLE_CERTIFICATE: ${{ matrix.platform == 'macos' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ matrix.platform == 'macos' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos' && vars.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'macos' && vars.APPLE_TEAM_ID || '' }}
+          APPLE_API_ISSUER: ${{ matrix.platform == 'macos' && vars.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY: ${{ matrix.platform == 'macos' && vars.APPLE_API_KEY || '' }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ matrix.platform == 'windows' && vars.WINDOWS_CERTIFICATE_THUMBPRINT || '' }}
+          WINDOWS_TIMESTAMP_URL: ${{ matrix.platform == 'windows' && vars.WINDOWS_TIMESTAMP_URL || '' }}
         with:
-          tauriScript: bash scripts/verify-updater/build.sh
+          tauriScript: bash scripts/release-build.sh
           tagName: v__VERSION__
-          releaseName: crowline v__VERSION__
-          releaseBody: See the repository changelog and attached installers for this release.
+          releaseName: crowline v__VERSION__ validation draft
+          releaseBody: >-
+            Internal validation draft. Do not publish until every selected platform job and the
+            release checklist pass. The private GitHub updater URL is not a public update channel.
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: true
-          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
+          args: ${{ matrix.args }} --config .release/tauri.release.conf.json --ci
+
+      - name: Remove Apple notarization key
+        if: always() && matrix.platform == 'macos'
+        shell: bash
+        run: |
+          if [[ -n "${APPLE_API_KEY_PATH:-}" && "$APPLE_API_KEY_PATH" == "$RUNNER_TEMP/"* ]]; then
+            rm -f -- "$APPLE_API_KEY_PATH"
+          fi
+
+      - name: Remove Windows code-signing certificate
+        if: always() && matrix.platform == 'windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ vars.WINDOWS_CERTIFICATE_THUMBPRINT }}
+        run: |
+          $thumbprint = ($env:WINDOWS_CERTIFICATE_THUMBPRINT -replace '\s', '').ToUpperInvariant()
+          if ($thumbprint -match '^[A-F0-9]{40}$') {
+            Remove-Item -LiteralPath "Cert:\CurrentUser\My\$thumbprint" -Force -ErrorAction SilentlyContinue
+          }
