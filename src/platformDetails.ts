@@ -31,7 +31,7 @@ const cliSession = (provider: string): LocalizedText => ({
 
 const platformDetails: Record<Provider, PlatformDefinition> = {
   github: {
-    canStartAppLogin: true,
+    canStartAppLogin: false,
     cliCommand: "gh auth login",
     connectionSummary: { key: "platform.github" },
     supportsMultipleAccounts: true,
@@ -55,7 +55,7 @@ const platformDetails: Record<Provider, PlatformDefinition> = {
     canStartAppLogin: false,
     cliCommand: "gh auth login",
     connectionSummary: { key: "platform.github" },
-    supportsMultipleAccounts: false,
+    supportsMultipleAccounts: true,
     supportsActorAttribution: true,
   },
   railway: {

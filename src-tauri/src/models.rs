@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 pub(crate) const MAX_TARGETS: usize = 500;
+pub(crate) const MAX_HIDDEN_ACTIVITIES: usize = 10_000;
 const MAX_ACCOUNTS: usize = 32;
 const MAX_TEXT_LEN: usize = 512;
 
@@ -50,6 +51,8 @@ pub struct Account {
     pub label: String,
     pub mode: AccountMode,
     pub profile: Option<String>,
+    #[serde(default)]
+    pub cli_username: Option<String>,
 }
 
 impl Provider {
@@ -121,11 +124,20 @@ pub enum Scope {
     All,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DisplayScopes {
+    pub providers: HashMap<Provider, Scope>,
+    pub targets: HashMap<String, Scope>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     #[serde(default)]
     pub scope: Scope,
+    #[serde(default)]
+    pub display_scopes: DisplayScopes,
     #[serde(default = "default_history_hours")]
     pub history_hours: u32,
     #[serde(default)]
@@ -136,6 +148,16 @@ pub struct Settings {
     pub panel: crate::panel::PanelSettings,
     #[serde(default)]
     pub preferences: crate::preferences::Preferences,
+    #[serde(default)]
+    pub hidden_activities: Vec<ActivityKey>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActivityKey {
+    pub provider: Provider,
+    pub target_id: String,
+    pub activity_id: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -165,6 +187,14 @@ pub struct NotificationRuleChange {
 pub enum SettingsChange {
     Scope {
         value: Scope,
+    },
+    DisplayProviderScope {
+        provider: Provider,
+        scope: Option<Scope>,
+    },
+    DisplayTargetScope {
+        target_key: String,
+        scope: Option<Scope>,
     },
     HistoryHours {
         value: u32,
@@ -204,17 +234,23 @@ pub enum SettingsChange {
         connection_id: String,
         alias: Option<String>,
     },
+    ActivityVisibility {
+        activity: ActivityKey,
+        hidden: bool,
+    },
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             scope: Scope::Mine,
+            display_scopes: DisplayScopes::default(),
             history_hours: default_history_hours(),
             targets: Vec::new(),
             accounts: default_accounts(),
             panel: crate::panel::PanelSettings::default(),
             preferences: crate::preferences::Preferences::default(),
+            hidden_activities: Vec::new(),
         }
     }
 }
@@ -227,6 +263,7 @@ fn default_accounts() -> Vec<Account> {
             label: "GitHub (local)".into(),
             mode: AccountMode::Local,
             profile: None,
+            cli_username: None,
         },
         Account {
             id: LOCAL_VERCEL_ID.into(),
@@ -234,6 +271,7 @@ fn default_accounts() -> Vec<Account> {
             label: "Vercel (local)".into(),
             mode: AccountMode::Local,
             profile: None,
+            cli_username: None,
         },
     ]
 }
@@ -258,6 +296,10 @@ impl Settings {
         self.panel
             .hidden_targets
             .retain(|key| target_keys.contains(key));
+        let display_scopes_before = self.display_scopes.targets.len();
+        self.display_scopes
+            .targets
+            .retain(|key, _| target_keys.contains(key));
         let aliases_before = self.preferences.account_aliases.len();
         let account_ids: HashSet<_> = self
             .accounts
@@ -270,6 +312,7 @@ impl Settings {
         rules_before != self.preferences.notifications.rules.len()
             || pins_before != self.panel.pinned_targets.len()
             || hidden_before != self.panel.hidden_targets.len()
+            || display_scopes_before != self.display_scopes.targets.len()
             || aliases_before != self.preferences.account_aliases.len()
     }
 
@@ -315,6 +358,7 @@ impl Settings {
                                 label: profile.clone(),
                                 mode: AccountMode::Local,
                                 profile: Some(profile),
+                                cli_username: None,
                             });
                             id
                         })
@@ -336,6 +380,18 @@ impl Settings {
         }
         if self.targets.len() > MAX_TARGETS {
             return Err(format!("At most {MAX_TARGETS} targets can be selected."));
+        }
+        if self.hidden_activities.len() > MAX_HIDDEN_ACTIVITIES {
+            return Err(format!(
+                "At most {MAX_HIDDEN_ACTIVITIES} activities can be hidden."
+            ));
+        }
+        let mut hidden = HashSet::new();
+        for activity in &self.hidden_activities {
+            activity.validate()?;
+            if !hidden.insert(activity) {
+                return Err("Each hidden activity must be unique.".into());
+            }
         }
         if self.accounts.len() > MAX_ACCOUNTS {
             return Err(format!(
@@ -378,6 +434,14 @@ impl Settings {
         }
         let target_keys: HashSet<_> = self.targets.iter().map(Target::key).collect();
         if self
+            .display_scopes
+            .targets
+            .iter()
+            .any(|(key, _)| key.trim().is_empty() || key.len() > 1600 || !target_keys.contains(key))
+        {
+            return Err("A display scope references an unknown target.".into());
+        }
+        if self
             .preferences
             .notifications
             .rules
@@ -396,6 +460,47 @@ impl Settings {
         }
         Ok(())
     }
+
+    pub fn effective_display_scope(
+        &self,
+        provider: Provider,
+        connection_id: Option<&str>,
+        target_id: Option<&str>,
+    ) -> Scope {
+        let target_scope = connection_id
+            .zip(target_id)
+            .and_then(|(connection_id, target_id)| {
+                self.display_scopes.targets.get(&format!(
+                    "{}:{connection_id}:{target_id}",
+                    provider.as_str()
+                ))
+            });
+        target_scope
+            .copied()
+            .or_else(|| self.display_scopes.providers.get(&provider).copied())
+            .unwrap_or(self.scope)
+    }
+}
+
+impl ActivityKey {
+    pub fn from_activity(activity: &Activity) -> Self {
+        Self {
+            provider: activity.provider,
+            target_id: activity.target_id.clone(),
+            activity_id: activity.id.clone(),
+        }
+    }
+
+    pub fn matches(&self, activity: &Activity) -> bool {
+        self.provider == activity.provider
+            && self.target_id == activity.target_id
+            && self.activity_id == activity.id
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        validate_text("Hidden activity target ID", &self.target_id)?;
+        validate_text("Hidden activity ID", &self.activity_id)
+    }
 }
 
 impl Account {
@@ -409,10 +514,25 @@ impl Account {
         {
             return Err("Account IDs contain unsupported characters.".into());
         }
+        if let Some(username) = self.cli_username.as_deref() {
+            validate_github_username(username)?;
+        }
         match self.provider {
-            Provider::Github | Provider::Vercel | Provider::Bitbucket => {
-                if self.provider != Provider::Bitbucket && self.profile.is_some() {
-                    return Err("GitHub and Vercel accounts cannot use AWS profiles.".into());
+            Provider::Github
+            | Provider::GithubDeployments
+            | Provider::Vercel
+            | Provider::Bitbucket => {
+                if !matches!(
+                    self.provider,
+                    Provider::Github | Provider::GithubDeployments
+                ) && self.cli_username.is_some()
+                {
+                    return Err("Only GitHub accounts can select a GitHub CLI user.".into());
+                }
+                if self.provider != Provider::Bitbucket {
+                    if let Some(identity) = self.profile.as_deref() {
+                        validate_text("Account identity", identity)?;
+                    }
                 }
                 if self.provider == Provider::Bitbucket {
                     if self.mode != AccountMode::Isolated
@@ -425,6 +545,19 @@ impl Account {
                         })
                     {
                         return Err("Bitbucket accounts must use an isolated connection ID.".into());
+                    }
+                    return Ok(());
+                }
+                if self.provider == Provider::GithubDeployments {
+                    let legacy_local =
+                        self.mode == AccountMode::Local && self.id == "github-deployments:local";
+                    let isolated = self.mode == AccountMode::Isolated
+                        && self.id.starts_with("github-deployments-");
+                    if !legacy_local && !isolated {
+                        return Err(
+                            "GitHub Deployments accounts must use an isolated connection ID."
+                                .into(),
+                        );
                     }
                     return Ok(());
                 }
@@ -441,6 +574,9 @@ impl Account {
                 }
             }
             Provider::Aws => {
+                if self.cli_username.is_some() {
+                    return Err("AWS accounts cannot select a GitHub CLI user.".into());
+                }
                 if self.mode != AccountMode::Local {
                     return Err("AWS profile accounts must use local mode.".into());
                 }
@@ -454,6 +590,7 @@ impl Account {
             _ => {
                 if self.mode != AccountMode::Local
                     || self.profile.is_some()
+                    || self.cli_username.is_some()
                     || self.id != format!("{}:local", self.provider.as_str())
                 {
                     return Err("This provider reuses one existing local CLI session.".into());
@@ -469,6 +606,22 @@ impl Account {
         }
         Ok(())
     }
+}
+
+fn validate_github_username(value: &str) -> Result<(), String> {
+    let bytes = value.as_bytes();
+    if bytes.is_empty()
+        || bytes.len() > 39
+        || bytes.first() == Some(&b'-')
+        || bytes.last() == Some(&b'-')
+        || value.contains("--")
+        || !bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
+    {
+        return Err("The GitHub CLI user name is invalid.".into());
+    }
+    Ok(())
 }
 
 impl Target {
@@ -511,6 +664,70 @@ mod settings_change_tests {
         assert!(serde_json::from_str::<SettingsChange>(
             r#"{"kind":"scope","value":"mine","unexpected":true}"#
         )
+        .is_err());
+        let activity: SettingsChange = serde_json::from_str(
+            r#"{"kind":"activityVisibility","activity":{"provider":"github","targetId":"example/repo","activityId":"run-1"},"hidden":true}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            activity,
+            SettingsChange::ActivityVisibility { hidden: true, .. }
+        ));
+        assert!(serde_json::from_str::<SettingsChange>(
+            r#"{"kind":"activityVisibility","activity":{"provider":"github","targetId":"example/repo","activityId":"run-1","connectionId":"forged"},"hidden":true}"#
+        )
+        .is_err());
+        let clear_scope: SettingsChange = serde_json::from_str(
+            r#"{"kind":"displayTargetScope","targetKey":"github:github:local:example/repo","scope":null}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            clear_scope,
+            SettingsChange::DisplayTargetScope { scope: None, .. }
+        ));
+    }
+}
+
+#[cfg(test)]
+mod account_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_github_account_without_cli_username_still_loads_for_explicit_rebind() {
+        let account: Account = serde_json::from_str(
+            r#"{"id":"github-00000000-0000-0000-0000-000000000000","provider":"github","label":"Legacy","mode":"isolated","profile":"42"}"#,
+        )
+        .expect("legacy account");
+        assert_eq!(account.cli_username, None);
+        account.validate().expect("legacy account remains valid");
+    }
+
+    #[test]
+    fn github_cli_username_is_provider_scoped_and_strictly_validated() {
+        let valid = Account {
+            id: "github-00000000-0000-0000-0000-000000000000".into(),
+            provider: Provider::Github,
+            label: "Example".into(),
+            mode: AccountMode::Isolated,
+            profile: Some("42".into()),
+            cli_username: Some("example-user".into()),
+        };
+        valid.validate().expect("valid GitHub account");
+        for username in ["", "-example", "example-", "example--user", "example_user"] {
+            assert!(Account {
+                cli_username: Some(username.into()),
+                ..valid.clone()
+            }
+            .validate()
+            .is_err());
+        }
+        assert!(Account {
+            id: "vercel-00000000-0000-0000-0000-000000000000".into(),
+            provider: Provider::Vercel,
+            cli_username: Some("example-user".into()),
+            ..valid
+        }
+        .validate()
         .is_err());
     }
 }
@@ -594,15 +811,41 @@ pub struct Issue {
     pub target_id: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QueryHealthStatus {
+    Checking,
+    Success,
+    Partial,
+    Error,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryHealth {
+    pub provider: Provider,
+    pub connection_id: String,
+    pub target_id: String,
+    pub status: QueryHealthStatus,
+    pub last_attempt_at: String,
+    pub last_successful_at: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub settings: Settings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings_error: Option<String>,
     pub connections: Vec<Connection>,
     pub activities: Vec<Activity>,
     pub issues: Vec<Issue>,
     pub refreshing: bool,
     pub last_updated_at: Option<String>,
+    #[serde(default = "default_poll_interval_seconds")]
+    pub poll_interval_seconds: u64,
+    #[serde(default)]
+    pub query_health: Vec<QueryHealth>,
     #[serde(default)]
     pub history: Vec<TargetHistory>,
     #[serde(default)]
@@ -613,15 +856,22 @@ impl Snapshot {
     pub fn initial(settings: Settings) -> Self {
         Self {
             settings,
+            settings_error: None,
             connections: Vec::new(),
             activities: Vec::new(),
             issues: Vec::new(),
             refreshing: false,
             last_updated_at: None,
+            poll_interval_seconds: default_poll_interval_seconds(),
+            query_health: Vec::new(),
             history: Vec::new(),
             pending_targets: Vec::new(),
         }
     }
+}
+
+fn default_poll_interval_seconds() -> u64 {
+    120
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -685,6 +935,10 @@ mod tests {
         let mut settings = Settings::default();
         settings.panel.pinned_targets = vec!["github:github:local:org/removed".into()];
         settings.panel.hidden_targets = vec!["github:github:local:org/removed".into()];
+        settings
+            .display_scopes
+            .targets
+            .insert("github:github:local:org/removed".into(), Scope::All);
         settings.preferences.notifications.rules = vec![crate::preferences::NotificationRule {
             target_key: "github:github:local:org/removed".into(),
             scope: crate::preferences::NotificationScope::Mine,
@@ -694,8 +948,51 @@ mod tests {
         assert!(settings.prune_target_references());
         assert!(settings.panel.pinned_targets.is_empty());
         assert!(settings.panel.hidden_targets.is_empty());
+        assert!(settings.display_scopes.targets.is_empty());
         assert!(settings.preferences.notifications.rules.is_empty());
         assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn effective_display_scope_prefers_target_then_provider_then_global() {
+        let selected = Target {
+            id: "org/app".into(),
+            provider: Provider::Github,
+            connection_id: LOCAL_GITHUB_ID.into(),
+            name: "app".into(),
+            description: None,
+            metadata: HashMap::new(),
+        };
+        let mut settings = Settings {
+            scope: Scope::Mine,
+            targets: vec![selected.clone()],
+            ..Settings::default()
+        };
+        settings
+            .display_scopes
+            .providers
+            .insert(Provider::Github, Scope::All);
+        settings
+            .display_scopes
+            .targets
+            .insert(selected.key(), Scope::Mine);
+
+        assert_eq!(
+            settings.effective_display_scope(
+                Provider::Github,
+                Some(LOCAL_GITHUB_ID),
+                Some("org/app")
+            ),
+            Scope::Mine
+        );
+        assert_eq!(
+            settings.effective_display_scope(Provider::Github, None, None),
+            Scope::All
+        );
+        assert_eq!(
+            settings.effective_display_scope(Provider::Vercel, None, None),
+            Scope::Mine
+        );
     }
 }
 

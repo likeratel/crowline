@@ -104,7 +104,11 @@ export function GeneralPreferences({ settings, error }: Props) {
           <label className="preference-option">
             <input
               type="checkbox"
-              checked={settings.preferences.checkUpdatesAutomatically}
+              disabled={working || !status?.updaterConfigured}
+              checked={
+                Boolean(status?.updaterConfigured) &&
+                settings.preferences.checkUpdatesAutomatically
+              }
               onChange={(event) =>
                 void change({
                   kind: "automaticUpdates",
@@ -160,17 +164,19 @@ export function GeneralPreferences({ settings, error }: Props) {
         ) : (
           <p>{c("updaterUnavailable")}</p>
         )}
-        <button
-          className="text-button"
-          disabled={working}
-          onClick={() =>
-            void perform(() =>
-              bridge.open("https://github.com/likeratel/crowline/releases"),
-            )
-          }
-        >
-          {c("releases")}
-        </button>
+        {status?.updaterConfigured && (
+          <button
+            className="text-button"
+            disabled={working}
+            onClick={() =>
+              void perform(() =>
+                bridge.open("https://github.com/likeratel/crowline/releases"),
+              )
+            }
+          >
+            {c("releases")}
+          </button>
+        )}
       </fieldset>
       {(problem || error) && (
         <p className="notice warning" role="alert">

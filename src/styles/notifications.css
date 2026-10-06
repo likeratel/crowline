@@ -60,6 +60,8 @@
 }
 .notification-search:focus-within {
   border-color: var(--focus);
+  outline: 2px solid var(--focus);
+  outline-offset: var(--space-1);
 }
 .notification-search input {
   width: 100%;
@@ -68,6 +70,7 @@
   outline: 0;
   color: var(--text);
   background: transparent;
+  font-size: 12px;
 }
 .notification-bulk {
   display: flex;
@@ -206,4 +209,21 @@
     flex-basis: 100%;
     width: 100%;
   }
+}
+.notification-master-row {
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-surface);
+  background: var(--surface);
+  align-items: flex-start;
+}
+.notification-master-row .field-help {
+  margin-top: var(--space-1);
+}
+.notification-context {
+  display: grid;
+  gap: var(--space-1);
+  color: var(--muted);
+  font-size: 12px;
+  padding: var(--space-3) 0 var(--space-4);
 }

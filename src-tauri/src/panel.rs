@@ -1,7 +1,11 @@
-use chrono::{DateTime, Duration, Utc};
+#[cfg(test)]
+use chrono::Duration;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::models::{Activity, ActivityStatus, Provider, Settings};
+#[cfg(test)]
+use crate::models::ActivityStatus;
+use crate::models::{Activity, Provider, Settings};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -73,18 +77,8 @@ pub fn is_blocked(activity: &Activity) -> bool {
     activity.provider == Provider::Vercel && activity.raw_status.eq_ignore_ascii_case("BLOCKED")
 }
 
-pub fn visible_activity(activity: &Activity, now: DateTime<Utc>) -> bool {
-    if is_blocked(activity) {
-        return false;
-    }
-    if matches!(
-        activity.status,
-        ActivityStatus::Queued | ActivityStatus::Running | ActivityStatus::Waiting
-    ) {
-        return DateTime::parse_from_rfc3339(&activity.started_at)
-            .is_ok_and(|started| started >= now - Duration::hours(24));
-    }
-    true
+pub fn visible_activity(activity: &Activity, _now: DateTime<Utc>) -> bool {
+    !is_blocked(activity)
 }
 
 #[cfg(test)]
@@ -115,13 +109,13 @@ mod tests {
     }
 
     #[test]
-    fn exact_age_boundary_uses_start_and_keeps_completed_history() {
+    fn long_running_and_completed_activity_remain_visible() {
         let now = DateTime::parse_from_rfc3339("2026-09-29T12:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
         let run = activity();
         assert!(visible_activity(&run, now));
-        assert!(!visible_activity(&run, now + Duration::milliseconds(1)));
+        assert!(visible_activity(&run, now + Duration::days(30)));
         assert!(visible_activity(
             &Activity {
                 status: ActivityStatus::Success,

@@ -205,6 +205,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   height: var(--control-height);
+  min-height: var(--control-height);
   padding: 0 var(--space-3);
   color: var(--text);
   background: var(--canvas);
@@ -214,10 +215,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: var(--space-6) 0 var(--space-3);
+  margin: var(--space-3) 0 var(--space-2);
 }
 .target-heading h3 {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
 }
 .target-heading h3 span {
@@ -230,10 +231,15 @@
   color: var(--muted);
 }
 .target-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   margin-bottom: var(--space-2);
 }
 .target-search {
-  margin-bottom: var(--space-2);
+  margin-bottom: 0;
+  min-width: 0;
+  flex: 1;
 }
 .target-bulk-actions {
   display: flex;
@@ -321,7 +327,7 @@
   margin-top: var(--space-3);
 }
 .account-picker {
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-3);
 }
 .account-picker-row {
   display: flex;
@@ -350,6 +356,7 @@
   background-color: var(--canvas);
   color: var(--text);
   font-size: 12px;
+  line-height: 1;
 }
 .account-picker input {
   padding-inline: var(--space-3);
@@ -416,4 +423,287 @@
 .account-removal-confirmation > div {
   display: flex;
   gap: var(--space-2);
+}
+
+.service-selector {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  padding: 0;
+  margin-bottom: var(--space-4);
+}
+.service-selector > label {
+  display: grid;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.service-selector select {
+  width: 100%;
+}
+.provider-catalog {
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-surface);
+  margin-bottom: var(--space-6);
+}
+.provider-tabs button {
+  min-height: 48px;
+}
+.provider-tabs button small {
+  display: block;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--muted);
+}
+.setup-step-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.setup-step-heading > span {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.setup-step-heading h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.setup-step-heading p {
+  margin-top: var(--space-1);
+  color: var(--muted);
+  font-size: 12px;
+}
+.project-step {
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-6);
+}
+.account-picker-row {
+  flex-wrap: wrap;
+}
+.account-picker-row > label {
+  flex-basis: 240px;
+}
+.account-alias-editor {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+.account-alias-editor .field-help {
+  margin: 0;
+}
+.account-alias-editor .account-alias-field {
+  align-items: stretch;
+}
+.connection-status-label {
+  font-weight: 400;
+  color: var(--muted);
+}
+.service-display-setting {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) 1fr;
+  gap: var(--space-4);
+  align-items: end;
+}
+.service-display-setting > p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.project-selection-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 250px);
+  align-items: center;
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--border);
+  padding-right: var(--space-3);
+}
+.project-selection-row:last-child {
+  border: 0;
+}
+.project-selection-row .target-option {
+  border: 0;
+  align-self: stretch;
+  min-height: 76px;
+}
+.project-selection-row .display-scope-control {
+  padding-block: var(--space-3);
+}
+.target-option .target-name {
+  margin: 0;
+  min-width: 0;
+}
+.target-name strong {
+  color: var(--text);
+}
+.target-name small {
+  display: block;
+  font-size: 12px;
+  margin-top: var(--space-1);
+}
+.target-bulk-actions {
+  align-items: center;
+}
+.target-bulk-actions .field-help {
+  margin: 0;
+}
+@media (max-width: 720px) {
+  .service-display-setting {
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+  }
+  .project-selection-row {
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 220px);
+    gap: 0;
+    padding-right: 0;
+  }
+  .project-selection-row .display-scope-control {
+    padding: var(--space-2) var(--space-3);
+  }
+  .project-selection-row .target-option {
+    min-height: 60px;
+  }
+}
+@media (max-width: 460px) {
+  .service-selector {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .account-picker-row > label {
+    flex-basis: 100%;
+  }
+}
+.authentication-details {
+  margin-bottom: var(--space-2);
+  color: var(--muted);
+  font-size: 12px;
+}
+.authentication-details > summary {
+  cursor: pointer;
+  padding-block: var(--space-2);
+}
+.authentication-details[open] > summary {
+  margin-bottom: var(--space-2);
+}
+.project-notification-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.connection-overview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-2);
+}
+.connection-overview .connection-state,
+.connection-overview .connection-actions {
+  margin: 0;
+}
+.project-selection {
+  border-top: 1px solid var(--border);
+}
+.project-preferences {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-3);
+}
+.project-preferences > .display-scope-control {
+  flex: 0 1 280px;
+}
+.project-preferences > .display-scope-control label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.project-preferences > .display-scope-control label > span {
+  white-space: nowrap;
+}
+.project-selection-help {
+  color: var(--muted);
+  font-size: 12px;
+}
+.project-selection-help summary {
+  cursor: pointer;
+  padding-block: var(--space-2);
+}
+.project-selection-help[open] {
+  flex-basis: 100%;
+}
+.project-selection-help p {
+  margin-top: var(--space-2);
+}
+.selection-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: var(--space-2);
+}
+@media (max-width: 520px) {
+  .project-selection-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .project-selection-row .display-scope-control {
+    padding: 0 var(--space-3) var(--space-3) 40px;
+  }
+  .target-controls {
+    flex-wrap: wrap;
+  }
+  .target-controls .search-box {
+    order: 0;
+  }
+  .target-bulk-actions {
+    flex-wrap: wrap;
+  }
+}
+
+@media (min-width: 521px) {
+  .service-selector > label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    white-space: nowrap;
+  }
+  .service-selector > label select {
+    flex: 1;
+    min-width: 0;
+  }
+  .account-picker-row > label {
+    flex-direction: row;
+    align-items: center;
+    white-space: nowrap;
+    gap: var(--space-3);
+  }
+  .account-picker-row > label select {
+    flex: 1;
+    min-width: 120px;
+  }
 }

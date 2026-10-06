@@ -37,17 +37,14 @@ Captured from the app’s browser preview with fictional projects and accounts. 
 
 ## Development setup and run
 
-Node.js 22.23.3 or later, pnpm 10, and Rust stable are required. Go 1.26.8 builds the isolated GitHub helper, but is not needed by packaged-app users. Install [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/) (Xcode Command Line Tools on macOS; Microsoft C++ Build Tools and WebView2 on Windows).
+Node.js 22.23.3 or later, pnpm 10, and Rust stable are required. Install [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/) (Xcode Command Line Tools on macOS; Microsoft C++ Build Tools and WebView2 on Windows).
 
 ```sh
 git clone https://github.com/likeratel/crowline.git
 cd crowline
 pnpm install --frozen-lockfile
-pnpm tools:prepare
 pnpm tauri dev
 ```
-
-`tools:prepare` downloads pinned GitHub CLI, Node.js, and Vercel CLI distributions and builds the isolated GitHub helper from checksum-verified upstream source. It needs internet access and several hundred MB of disk space; it verifies pinned checksums and does not install tools globally.
 
 ## Build
 
@@ -59,29 +56,31 @@ Packages are written to `src-tauri/target/release/bundle/`. Build macOS apps on 
 
 ## Connect accounts
 
-Open **Settings → Connections**, choose a service, connect an account, and select projects to monitor. Settings apply immediately. You can edit an account’s alias beside the account selector. Select or deselect all search results at once; hidden matches and other accounts keep their selections.
+Open **Settings → Connections**, choose a service, connect an account, and select projects to monitor. Project choices apply immediately. Use **Edit alias → Save alias** to change an account name and see saved confirmation. Select or deselect all search results at once; hidden matches and other accounts keep their selections.
 
-GitHub and Vercel can reuse local CLI sessions or add separate accounts through browser sign-in. Packaged apps include their CLI tools. AWS uses existing profiles and a selected region; AWS CLI is needed to start SSO sign-in. Other CLI integrations require their official CLI to be installed and signed in.
+Display scope inherits from the app default to the service and then the project. Set **My runs / All runs** per service or project in Connections; project choices take priority and apply to dashboard/history/menu bar. Notification rules are separate. Newly selected projects default to enabled **My runs · All results** rules while the master notification switch and existing rules remain unchanged. The notification switch pauses delivery without erasing project rules. Account aliases use explicit Save/Cancel and show saved confirmation. Bulk project selection uses one Select all/Clear all action for the current search. [Provider verification evidence](docs/provider-verification.md) separates command-contract tests from authenticated live checks.
 
-Removing an additional CLI account removes its monitoring configuration but does not sign it out. Removing a Bitbucket account also deletes its app-managed credentials.
+GitHub uses the installed `gh` CLI. Sign in with `gh auth login`, then select the CLI username for each connection. Vercel uses the installed `vercel` CLI and separate CLI configuration for additional accounts. No Crowline OAuth registration or GitHub/Vercel token form is needed. AWS reuses shared profiles; other supported CLI integrations reuse their existing sessions.
+
+Existing connection IDs, selected targets, aliases and notification rules are preserved. Reconnect API-era GitHub accounts to the matching CLI username and sign in to the corresponding Vercel CLI configuration. Bitbucket remains the token-authentication exception. See [authentication and provider access](docs/authentication.md).
 
 ## Supported monitoring
 
-Most services reuse their official CLI session; install the CLI, sign in, then restart crowline. Bitbucket Cloud connects directly with an API token. No deployment hooks or project instrumentation are required.
+crowline prefers installed official CLIs, retains AWS SDK shared-profile access and Bitbucket API-token access, and bundles no provider executable or Node runtime. It requires no deployment hooks or project instrumentation.
 
-| Platform | Monitoring | Limits |
-| --- | --- | --- |
-| GitHub Actions | Workflow runs | Existing `gh`; recent pages plus separate active checks. |
-| Vercel | Project deployments | Existing `vercel`; `BLOCKED` entries excluded. |
-| AWS | CloudFormation, ECS, Amplify branch jobs | Selected profile/region; actor is unknown. |
-| GitHub Deployments | Deployment records and latest status | Separate from Actions; up to 20 status-detail reads per recent page. |
-| Railway, Netlify, Render | Deployment history | Official CLI and provider-specific recent-page limits. |
-| Heroku, Fly.io | App releases | Fly shows release status, not machine runtime status. |
-| GitLab.com | Deployments and CI pipelines | No self-managed GitLab or actor attribution. |
-| Bitbucket Cloud | Repository Pipelines | Email + scoped API token; recent pages, active checks, and triggerer-based ownership. Data Center is not supported. |
-| DigitalOcean, Google Cloud, Azure App Service | App deployments, Cloud Build/Run, Kudu records | Provider-specific scope, output, and paging limits. |
+| Platform                                      | Monitoring                                     | Limits                                                                                                              |
+| --------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| GitHub Actions                                | Workflow runs                                  | Installed gh; selected CLI user per connection, recent pages and active checks. |
+| Vercel                                        | Project deployments                            | Installed vercel; separate additional-account configuration; `BLOCKED` excluded. |
+| AWS                                           | CloudFormation, ECS, Amplify branch jobs       | Selected profile/region; actor is unknown.                                                                          |
+| GitHub Deployments                            | Deployment records and latest status           | Separate from Actions; up to 20 status-detail reads per recent page.                                                |
+| Railway, Netlify, Render                      | Deployment history                             | Installed official CLI and provider-specific recent-page limits.                                                    |
+| Heroku, Fly.io                                | App releases                                   | Fly shows release status, not machine runtime status.                                                               |
+| GitLab.com                                    | Deployments and CI pipelines                   | No self-managed GitLab or actor attribution.                                                                        |
+| Bitbucket Cloud                               | Repository Pipelines                           | Email + scoped API token; recent pages, active checks, and triggerer-based ownership. Data Center is not supported. |
+| DigitalOcean, Google Cloud, Azure App Service | App deployments, Cloud Build/Run, Kudu records | Provider-specific scope, output, and paging limits.                                                                 |
 
-EAS/Expo, fastlane, Cloudflare Pages/Workers, Firebase, and Supabase are catalog guidance only, not direct monitoring integrations: their current CLI/API contracts do not provide account-wide discovery or trustworthy deployment history. Monitor CI-driven work through GitHub Actions or GitLab pipelines where applicable. See [mobile provider notes](docs/mobile-provider-notes.md). New adapters have synthetic-fixture and command-contract coverage, not live-account-login validation.
+EAS/Expo, fastlane, Cloudflare Pages/Workers, Firebase, and Supabase are catalog guidance only, not monitoring integrations. Local CLI probes may report why they are unavailable, but crowline does not infer activity from incomplete provider data. Monitor CI-driven work through GitHub Actions or GitLab pipelines where applicable. See the [provider decision matrix](docs/authentication.md#provider-decision-matrix) and [mobile provider notes](docs/mobile-provider-notes.md). New adapters have synthetic-fixture and command-contract coverage, not live-account-login validation.
 
 ### Bitbucket Cloud
 
@@ -93,32 +92,41 @@ Recent Pipelines are loaded 20 at a time. Active checks query building, pending,
 
 ## Panel, notifications, and status
 
-- **Menu-bar panel:** recent runs with platform icons, status, branch, and actor. Execution names appear when the service supplies them: GitHub workflows, Vercel deployments, Bitbucket custom pipelines, GitLab pipelines/jobs, and Cloud Build triggers. Duplicate names are shown once. Click outside or press `Esc` to dismiss.
-- **Dashboard:** filter by service, account, or **My runs / All runs**; search and load older history where supported. Unknown actors appear in **All runs**. Display filters do not change notification rules.
+Use the X beside an execution to hide just that row permanently across refresh and restart; Undo restores it. New executions remain visible. Hidden rows do not contribute to tray counts or subsequent notifications.
+
+- **Menu-bar panel:** recent runs with platform icons, status, branch, actor, and a compact per-target query-health summary. Execution names appear when the service supplies them: GitHub workflows, Vercel deployments, Bitbucket custom pipelines, GitLab pipelines/jobs, and Cloud Build triggers. Duplicate names are shown once. Click outside or press `Esc` to dismiss.
+- **Dashboard:** filter by service, account, **My runs / All runs**, and local execution status; search and load older history where supported. Unknown actors appear in **All runs**. Status filters do not change saved display scope or notification rules. Open an execution's details to see collected context, the source-reported execution update time, and target query health.
 - **Notifications:** choose **Off / My runs / All runs** per project, then **All results / Success only / Failed only / Custom**. Notifications include service, result, execution name/title, project, branch, and actor. Long text may be shortened by the OS banner. Initial results after startup do not trigger historical alerts.
 - **Menu bar settings:** choose visible services/projects and 1–10 rows per section. Runs stay in newest-first order. On macOS, Command-drag the crow icon to change its position among other menu-bar apps.
 - **General:** language, launch at login, update preferences, and app version.
 
-Active runs older than 24 hours and Vercel `BLOCKED` entries are hidden. Completed history supports 24-hour and 7-day views. crowline is read-only: it cannot deploy, rerun, cancel, or change infrastructure.
+Active runs remain visible after 24 hours and are labelled with their last observed state; this does not imply a failure. Vercel `BLOCKED` entries are hidden. Completed history supports 24-hour and 7-day views. crowline is read-only: it cannot deploy, rerun, cancel, or change infrastructure.
 
 ## Updates, data, and limits
 
-Queries run roughly every 30 seconds while jobs are active and every 120 seconds while idle, with backoff after errors. Timeouts, partial results, and provider paging limits appear in the UI. Delayed results can miss notifications; use the service’s own history for a complete record.
+Queries run roughly every 30 seconds while jobs are active and every 120 seconds while idle, with backoff after errors. The app shows query state and freshness per monitored project; an activity's provider-reported update time is separate from the local query time. On return to the foreground or network, stale or incomplete results can request a coalesced poll. Timeouts, partial results, and provider paging limits appear in the UI. Delayed results can miss notifications; use the service’s own history for a complete record.
 
-Settings live under the OS application-data directory at `io.crowline.desktop/settings.json`. GitHub/Vercel use their CLI credentials, AWS uses profiles, and Bitbucket credentials stay in the OS credential store. Account data is not bundled in installers.
+Settings and hidden execution keys live in `io.crowline.desktop/settings.json` under the OS application-data directory. Bitbucket tokens stay in the OS credential store. GitHub account-specific tokens are obtained through gh only for the matching subprocess and are not saved by Crowline. Provider credentials and executables are not bundled.
+
+If settings cannot be read or a migration cannot be saved, the app preserves the original file and locks settings/account changes with a recovery notice. Restore a valid backup or the folder permissions, then restart the app. Readable settings and monitoring results remain available.
 
 Automatic updates are not configured in the current build. The repository is private, and its release endpoint is not a public update source. See [release engineering](docs/releases.md) before enabling distribution or updates.
+
+The latest CLI-first multi-account changes have synthetic tests; live sign-in for every CLI version and Windows execution remain unverified.
 
 Locally verified: macOS Apple Silicon build/startup, GitHub/Vercel panel data, Bitbucket pipeline queries, and automated tests with fictional data. Windows runtime, live AWS access, additional-account browser sign-in, and the latest OS notification banner remain unverified. Dependency findings are recorded in the dated [security review](docs/security-review.md).
 
 See the [documentation index](docs/README.md) for release, provider, media, and historical review notes.
+
+The [2026-10-04 product QA report](docs/qa-2026-10-04.md) records selection latency, interface checks, independent review, and release blockers. Bulk changes save before background queries complete; clearing selections makes no remote request. A successful local build is not certification for every provider or operating system.
+
+The [2026-10-06 evolution and UX QA report](docs/qa-2026-10-06.md) records query freshness, execution investigation, connection guidance, and menu-bar interaction fixes, with separate automated and native verification limits.
 
 ## Development checks
 
 ```sh
 pnpm check
 pnpm test
-pnpm test:tools
 pnpm exec playwright install chromium
 pnpm test:e2e
 pnpm build
@@ -132,4 +140,4 @@ These are current repository commands; this README does not claim fixed test cou
 
 ## License
 
-crowline is available under the [MIT License](LICENSE). Helper-tool versions and licenses are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); packaged notices are under `tools/`. Crow icon provenance is in [brand notes](docs/brand.md).
+crowline is available under the [MIT License](LICENSE). Current package and logo notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Crow icon provenance is in [brand notes](docs/brand.md).

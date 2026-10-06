@@ -86,13 +86,10 @@ test("connection guidance preserves isolated sessions and names the AWS profile"
   await connections
     .getByLabel("연결할 계정")
     .selectOption("github:isolated-test");
-  const guide = connections.locator("details.connection-help");
+  const guide = connections.locator("details.connection-help").first();
   await guide.locator("summary").click();
-  await expect(guide).toContainText(
-    "앱의 ‘브라우저로 로그인’을 사용해 이 연결만 인증하세요",
-  );
-  await expect(guide).not.toContainText("gh auth login");
-  await connections.getByRole("tab", { name: "AWS", exact: true }).click();
+  await expect(guide).toContainText("gh auth login");
+  await connections.getByLabel("서비스", { exact: true }).selectOption("aws");
   await expect(guide).toContainText("development");
   await expect(guide).toContainText("aws sso login --profile <profile>");
   expect(
@@ -161,15 +158,13 @@ test("bulk target actions only update visible results in the current account", a
   const connections = page.getByRole("tabpanel", { name: "서비스 연결" });
   await connections.getByLabel("대상 검색").fill("no matching target");
   await expect(
-    connections.getByRole("button", { name: "검색 결과 전체 선택" }),
+    connections.getByRole("button", { name: "전체 선택" }),
   ).toBeDisabled();
   await expect(
-    connections.getByRole("button", { name: "검색 결과 전체 해제" }),
-  ).toBeDisabled();
+    connections.getByRole("button", { name: "전체 해제" }),
+  ).toHaveCount(0);
   await connections.getByLabel("대상 검색").fill("alpha");
-  await connections
-    .getByRole("button", { name: "검색 결과 전체 해제" })
-    .click();
+  await connections.getByRole("button", { name: "전체 해제" }).click();
 
   type TestBridge = {
     bulkChangeCount: () => number;
@@ -191,9 +186,7 @@ test("bulk target actions only update visible results in the current account", a
     stateAfterDeselect.snapshot.settings.targets.map((target) => target.id),
   ).not.toContain("github:alpha");
 
-  await connections
-    .getByRole("button", { name: "검색 결과 전체 선택" })
-    .click();
+  await connections.getByRole("button", { name: "전체 선택" }).click();
   const stateAfterSelect = await page.evaluate(async () => {
     const bridge = (window as unknown as { __testBridge: TestBridge })
       .__testBridge;
@@ -248,9 +241,7 @@ test("a narrowed bulk target failure stays visible and retryable", async ({
   await page.goto("/?view=dashboard");
   await page.getByRole("button", { name: "설정", exact: true }).click();
   const connections = page.getByRole("tabpanel", { name: "서비스 연결" });
-  await connections
-    .getByRole("button", { name: "검색 결과 전체 해제" })
-    .click();
+  await connections.getByRole("button", { name: "전체 해제" }).click();
   await expect(connections.getByRole("alert")).toContainText(
     "변경하지 못했습니다",
   );

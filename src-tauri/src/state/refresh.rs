@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     cli::CliInvocation,
-    models::{ActivityPage, TargetHistory},
+    models::{ActivityPage, QueryHealthStatus, TargetHistory},
     providers::catalog,
 };
 use futures::{stream, StreamExt};
@@ -13,19 +13,26 @@ const MAX_HISTORY_ACTIVITIES: usize = 10_000;
 
 impl AppState {
     pub async fn refresh<P: SnapshotPublisher + Sync>(&self, publisher: &P) -> Snapshot {
-        let Ok(_guard) = self.refresh_lock.try_lock() else {
+        let Ok(refresh_guard) = self.refresh_lock.try_lock() else {
             return self.snapshot().await;
         };
+        let refresh_cycle = self.refresh_wake.begin(refresh_guard);
         loop {
             let (settings, revision, epoch) = {
                 let _publish = self.publish_lock.lock().await;
                 let current = self.snapshot().await;
                 let revision = self.settings_revision.load(Ordering::SeqCst);
                 let epoch = self.refresh_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+                let attempted_at = Utc::now().to_rfc3339();
                 let next = Snapshot {
                     refreshing: true,
                     history: Vec::new(),
                     pending_targets: current.settings.targets.iter().map(Target::key).collect(),
+                    query_health: checking_query_health(
+                        &current.settings.targets,
+                        &current.query_health,
+                        &attempted_at,
+                    ),
                     ..current
                 };
                 let settings = next.settings.clone();
@@ -54,11 +61,13 @@ impl AppState {
                 ..current
             };
             self.emit(done.clone(), publisher).await;
+            refresh_cycle.finish(snapshot_needs_followup(&done, Utc::now()));
             return done;
         }
     }
 
     async fn emit<P: SnapshotPublisher>(&self, snapshot: Snapshot, publisher: &P) {
+        let snapshot = with_poll_interval(snapshot);
         *self.snapshot.write().await = snapshot.clone();
         publisher.publish_snapshot(&snapshot);
     }
@@ -207,12 +216,18 @@ impl AppState {
                 .cloned()
                 .collect()
         };
+        let query_health = if connection.status == ConnectionStatus::Connected {
+            current.query_health.clone()
+        } else {
+            set_account_health(&current.query_health, targets, QueryHealthStatus::Error)
+        };
         self.emit(
             Snapshot {
                 connections,
                 activities,
                 issues,
                 pending_targets,
+                query_health,
                 ..current
             },
             publisher,
@@ -239,9 +254,21 @@ impl AppState {
         let notifications = if kind != PageKind::History {
             match &result {
                 Ok(page) if page.issues.is_empty() || !page.activities.is_empty() => {
+                    let visible_activities = page
+                        .activities
+                        .iter()
+                        .filter(|activity| {
+                            !current
+                                .settings
+                                .hidden_activities
+                                .iter()
+                                .any(|hidden| hidden.matches(activity))
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
                     self.notification_engine.lock().await.observe(
                         target,
-                        &page.activities,
+                        &visible_activities,
                         &current.settings.preferences,
                         epoch,
                         observed_at,
@@ -252,8 +279,13 @@ impl AppState {
         } else {
             Vec::new()
         };
+        let hidden_activities = current.settings.hidden_activities.clone();
         let mut updated = apply_page(current, target, result, kind, epoch);
-        for delivery in notifications {
+        for delivery in notifications.into_iter().filter(|delivery| {
+            !hidden_activities
+                .iter()
+                .any(|hidden| delivery.matches(hidden))
+        }) {
             if let Err(message) = publisher.publish_notification(&delivery.notification) {
                 self.notification_engine
                     .lock()
@@ -397,6 +429,8 @@ fn apply_page(
     let mut history = current.history.clone();
     let mut activities = current.activities.clone();
     let mut last_updated_at = current.last_updated_at.clone();
+    let mut query_health = current.query_health.clone();
+    let outcome = QueryOutcome::from_result(&result);
     match result {
         Ok(page) => {
             let succeeded = page.issues.is_empty() || !page.activities.is_empty();
@@ -475,14 +509,163 @@ fn apply_page(
     } else {
         current.pending_targets.clone()
     };
+    if kind != PageKind::History {
+        query_health = apply_query_outcome(&query_health, target, kind, outcome);
+    }
     Snapshot {
         activities,
         history,
         issues,
         pending_targets,
         last_updated_at,
+        query_health,
         ..current
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum QueryOutcome {
+    Full,
+    Partial,
+    Failed,
+}
+
+impl QueryOutcome {
+    fn from_result(result: &Result<ActivityPage, String>) -> Self {
+        match result {
+            Ok(page) if page.issues.is_empty() => Self::Full,
+            Ok(page) if !page.activities.is_empty() => Self::Partial,
+            Ok(_) | Err(_) => Self::Failed,
+        }
+    }
+}
+
+fn checking_query_health(
+    targets: &[Target],
+    previous: &[QueryHealth],
+    attempted_at: &str,
+) -> Vec<QueryHealth> {
+    targets
+        .iter()
+        .map(|target| QueryHealth {
+            provider: target.provider,
+            connection_id: target.connection_id.clone(),
+            target_id: target.id.clone(),
+            status: QueryHealthStatus::Checking,
+            last_attempt_at: attempted_at.to_owned(),
+            last_successful_at: previous
+                .iter()
+                .find(|health| same_health_target(health, target))
+                .and_then(|health| health.last_successful_at.clone()),
+        })
+        .collect()
+}
+
+fn set_account_health(
+    current: &[QueryHealth],
+    targets: &[Target],
+    status: QueryHealthStatus,
+) -> Vec<QueryHealth> {
+    current
+        .iter()
+        .map(|health| {
+            if targets
+                .iter()
+                .any(|target| same_health_target(health, target))
+            {
+                QueryHealth {
+                    status,
+                    ..health.clone()
+                }
+            } else {
+                health.clone()
+            }
+        })
+        .collect()
+}
+
+fn apply_query_outcome(
+    current: &[QueryHealth],
+    target: &Target,
+    kind: PageKind,
+    outcome: QueryOutcome,
+) -> Vec<QueryHealth> {
+    let completed_at = Utc::now().to_rfc3339();
+    current
+        .iter()
+        .map(|health| {
+            if !same_health_target(health, target) {
+                return health.clone();
+            }
+            let status = query_status_after(health.status, target.provider, kind, outcome);
+            QueryHealth {
+                status,
+                last_successful_at: (status == QueryHealthStatus::Success)
+                    .then(|| completed_at.clone())
+                    .or_else(|| health.last_successful_at.clone()),
+                ..health.clone()
+            }
+        })
+        .collect()
+}
+
+fn query_status_after(
+    current: QueryHealthStatus,
+    provider: Provider,
+    kind: PageKind,
+    outcome: QueryOutcome,
+) -> QueryHealthStatus {
+    match kind {
+        PageKind::History => current,
+        PageKind::Recent if catalog::has_active_scan(provider) => match outcome {
+            QueryOutcome::Full => QueryHealthStatus::Checking,
+            QueryOutcome::Partial => QueryHealthStatus::Partial,
+            QueryOutcome::Failed => QueryHealthStatus::Error,
+        },
+        PageKind::Recent => outcome_status(outcome),
+        PageKind::Active => match (current, outcome) {
+            (QueryHealthStatus::Checking, QueryOutcome::Full) => QueryHealthStatus::Success,
+            (QueryHealthStatus::Error, QueryOutcome::Failed) => QueryHealthStatus::Error,
+            _ => QueryHealthStatus::Partial,
+        },
+    }
+}
+
+fn outcome_status(outcome: QueryOutcome) -> QueryHealthStatus {
+    match outcome {
+        QueryOutcome::Full => QueryHealthStatus::Success,
+        QueryOutcome::Partial => QueryHealthStatus::Partial,
+        QueryOutcome::Failed => QueryHealthStatus::Error,
+    }
+}
+
+fn same_health_target(health: &QueryHealth, target: &Target) -> bool {
+    health.provider == target.provider
+        && health.connection_id == target.connection_id
+        && health.target_id == target.id
+}
+
+fn snapshot_needs_followup(snapshot: &Snapshot, now: chrono::DateTime<Utc>) -> bool {
+    let stale_after_seconds = snapshot.poll_interval_seconds.saturating_mul(2).max(60);
+    let stale_after =
+        chrono::Duration::seconds(i64::try_from(stale_after_seconds).unwrap_or(i64::MAX));
+    snapshot.settings.targets.iter().any(|target| {
+        let Some(health) = snapshot
+            .query_health
+            .iter()
+            .find(|health| same_health_target(health, target))
+        else {
+            return true;
+        };
+        if health.status != QueryHealthStatus::Success {
+            return true;
+        }
+        health
+            .last_successful_at
+            .as_deref()
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+            .is_none_or(|successful_at| now.signed_duration_since(successful_at) > stale_after)
+    })
 }
 
 async fn bounded_active(

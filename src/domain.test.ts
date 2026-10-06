@@ -38,7 +38,13 @@ describe("activity filtering", () => {
     ]) {
       const snapshot = { ...base, activities };
       expect(visibleActivities(snapshot, "all", "", now)).toEqual([
-        { ...fresh, ownership: "mine" },
+        {
+          ...cached,
+          status: fresh.status,
+          rawStatus: fresh.rawStatus,
+          finishedAt: fresh.finishedAt,
+          updatedAt: fresh.updatedAt,
+        },
       ]);
       expect(
         visibleActivities(snapshot, "all", "", now, cached.connectionId),
@@ -86,6 +92,141 @@ describe("activity filtering", () => {
       ),
     ).toEqual([]);
   });
+  it("preserves grouping, attribution, and tie order across complex duplicates", () => {
+    const base = demoSnapshot();
+    const verified = {
+      ...base.activities[0],
+      id: "shared-run",
+      title: "verified release",
+      status: "running" as const,
+      rawStatus: "running",
+      updatedAt: "2026-09-29T00:00:00Z",
+      finishedAt: null,
+    };
+    const freshOther = {
+      ...verified,
+      connectionId: "github:work",
+      title: "other account title",
+      ownership: "other" as const,
+      status: "success" as const,
+      rawStatus: "completed",
+      updatedAt: "2026-09-29T00:05:00Z",
+      finishedAt: "2026-09-29T00:05:00Z",
+    };
+    const sameIdOtherTarget = {
+      ...verified,
+      targetId: "other-target",
+      title: "separate target",
+      status: "failed" as const,
+      rawStatus: "failure",
+      updatedAt: freshOther.updatedAt,
+      finishedAt: freshOther.finishedAt,
+    };
+    const tiedActive = {
+      ...verified,
+      id: "tied-run",
+      title: "tie",
+      updatedAt: "2026-09-29T00:04:00Z",
+    };
+    const tiedTerminal = {
+      ...tiedActive,
+      status: "success" as const,
+      rawStatus: "completed",
+      finishedAt: tiedActive.updatedAt,
+    };
+    const snapshot = {
+      ...base,
+      settings: { ...base.settings, scope: "mine" as const },
+      activities: [
+        verified,
+        sameIdOtherTarget,
+        freshOther,
+        tiedActive,
+        tiedTerminal,
+      ],
+    };
+
+    expect(
+      visibleActivities(
+        snapshot,
+        "all",
+        "",
+        Date.parse("2026-09-29T00:10:00Z"),
+      ),
+    ).toEqual([
+      {
+        ...verified,
+        status: freshOther.status,
+        rawStatus: freshOther.rawStatus,
+        updatedAt: freshOther.updatedAt,
+        finishedAt: freshOther.finishedAt,
+      },
+      sameIdOtherTarget,
+      tiedTerminal,
+    ]);
+    expect(
+      visibleActivities(
+        snapshot,
+        "all",
+        "verified release",
+        Date.parse("2026-09-29T00:10:00Z"),
+      ),
+    ).toEqual([
+      {
+        ...verified,
+        status: freshOther.status,
+        rawStatus: freshOther.rawStatus,
+        updatedAt: freshOther.updatedAt,
+        finishedAt: freshOther.finishedAt,
+      },
+    ]);
+  });
+  it("groups 5,000 distinct activities within a bounded synthetic budget", () => {
+    const base = demoSnapshot();
+    const template = base.activities[0];
+    const updatedAt = "2026-09-29T00:00:00Z";
+    const activities = Array.from({ length: 5_000 }, (_, index) => ({
+      ...template,
+      id: `synthetic-${index}`,
+      project: `project-${index}`,
+      title: `release-${index}`,
+      status: "success" as const,
+      rawStatus: "completed",
+      updatedAt,
+      finishedAt: updatedAt,
+    }));
+    const snapshot = {
+      ...base,
+      settings: { ...base.settings, scope: "all" as const },
+      activities,
+    };
+
+    const startedAt = performance.now();
+    const visible = visibleActivities(
+      snapshot,
+      "all",
+      "",
+      Date.parse("2026-09-29T00:10:00Z"),
+    );
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(visible).toHaveLength(5_000);
+    expect(visible[0].id).toBe("synthetic-0");
+    expect(visible[visible.length - 1]?.id).toBe("synthetic-4999");
+    expect(
+      elapsedMs,
+      `grouping 5,000 synthetic activities took ${elapsedMs.toFixed(1)}ms`,
+    ).toBeLessThan(1_000);
+
+    const latestStartedAt = performance.now();
+    const completed = latestCompleted(activities);
+    const latestElapsedMs = performance.now() - latestStartedAt;
+    expect(completed).toHaveLength(5_000);
+    expect(
+      latestElapsedMs,
+      `grouping 5,000 completed activities took ${latestElapsedMs.toFixed(1)}ms`,
+    ).toBeLessThan(1_000);
+  });
   it("mine excludes other users and unknown ownership", () => {
     expect(
       visibleActivities(demoSnapshot(), "all", "").every(
@@ -115,7 +256,7 @@ describe("activity filtering", () => {
       [],
     );
   });
-  it("hides active runs older than 24 hours", () => {
+  it("retains long-running observations instead of silently hiding them", () => {
     const snapshot = demoSnapshot();
     const old = {
       ...snapshot.activities[0],
@@ -124,7 +265,7 @@ describe("activity filtering", () => {
     };
     expect(
       visibleActivities({ ...snapshot, activities: [old] }, "all", ""),
-    ).toHaveLength(0);
+    ).toHaveLength(1);
   });
   it("uses the latest update rather than creation or completion time for recent runs", () => {
     const snapshot = demoSnapshot();
@@ -215,6 +356,16 @@ describe("IPC validation", () => {
   it("accepts a valid snapshot and rejects unknown source states", () => {
     expect(snapshotSchema.safeParse(demoSnapshot()).success).toBe(true);
     expect(
+      snapshotSchema.safeParse({
+        ...demoSnapshot(),
+        settingsError: "Synthetic settings read failure",
+      }).success,
+    ).toBe(true);
+    expect(
+      snapshotSchema.safeParse({ ...demoSnapshot(), settingsError: null })
+        .success,
+    ).toBe(true);
+    expect(
       settingsSchema.safeParse({
         scope: "everyone",
         historyHours: 24,
@@ -257,7 +408,7 @@ describe("status panel policy", () => {
     ).toEqual([approval]);
     expect(isActive(blocked)).toBe(false);
   });
-  it("uses the start time and exact 24-hour boundary regardless of the history setting", () => {
+  it("keeps active observations across the 24-hour boundary in either history range", () => {
     const base = demoSnapshot();
     const now = Date.parse("2026-09-29T12:00:00Z");
     for (const status of ["queued", "running", "waiting"] as const) {
@@ -274,7 +425,7 @@ describe("status panel policy", () => {
           activities: [item],
         };
         expect(visibleActivities(snapshot, "all", "", now)).toEqual([item]);
-        expect(visibleActivities(snapshot, "all", "", now + 1)).toEqual([]);
+        expect(visibleActivities(snapshot, "all", "", now + 1)).toEqual([item]);
       }
     }
   });

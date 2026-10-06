@@ -78,9 +78,12 @@ pub fn run() {
             commands::save_settings,
             commands::change_settings,
             commands::refresh,
+            commands::request_refresh,
             commands::discover,
             commands::create_connection,
             commands::connect_bitbucket,
+            commands::get_github_cli_accounts,
+            commands::connect_github_cli_account,
             commands::remove_connection,
             commands::begin_login,
             commands::get_login_status,
@@ -98,7 +101,11 @@ pub fn run() {
         .run(move |app, event| match event {
             RunEvent::Ready if !launched_by_autostart => windows::show_panel(app, None),
             #[cfg(target_os = "macos")]
-            RunEvent::Reopen { .. } => windows::show_panel(app, None),
+            // Preserve an existing visible dashboard instead of stealing focus
+            // into the status panel on an application reopen event.
+            RunEvent::Reopen { .. } if windows::should_show_panel_on_reopen(app) => {
+                windows::show_panel(app, None)
+            }
             _ => {}
         });
 }

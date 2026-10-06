@@ -3,7 +3,13 @@ import { useSettingsChanges } from "../settingsChangesContext";
 import { useI18n } from "../i18n";
 import { settingsCopy } from "../settingsCopy";
 
-export function SettingFeedback({ changeKey }: { changeKey: string }) {
+export function SettingFeedback({
+  changeKey,
+  onRetry,
+}: {
+  changeKey: string;
+  onRetry?: () => void | Promise<void>;
+}) {
   const { pendingKeys, failures, retry } = useSettingsChanges();
   const { locale, t } = useI18n();
   if (pendingKeys.includes(changeKey))
@@ -14,6 +20,7 @@ export function SettingFeedback({ changeKey }: { changeKey: string }) {
         aria-label={settingsCopy(locale, "saving")}
       >
         <LoaderCircle size={12} className="spin" />
+        {settingsCopy(locale, "saving")}
       </span>
     );
   const failure = failures[changeKey];
@@ -29,7 +36,7 @@ export function SettingFeedback({ changeKey }: { changeKey: string }) {
       <button
         type="button"
         className="text-button"
-        onClick={() => void retry(changeKey)}
+        onClick={() => (onRetry ? void onRetry() : void retry(changeKey))}
       >
         {t("common.retry")}
       </button>

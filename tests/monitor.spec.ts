@@ -38,9 +38,11 @@ test("settings can discover targets, deselect them and reach onboarding", async 
   await expect(connections.locator(".connections-settings")).toBeVisible();
   await connections.getByRole("button", { name: "연결 및 대상 확인" }).click();
   await connections.getByRole("checkbox").uncheck();
-  await connections.getByRole("tab", { name: "Vercel" }).click();
+  await connections
+    .getByLabel("서비스", { exact: true })
+    .selectOption("vercel");
   await connections.getByRole("checkbox").uncheck();
-  await connections.getByRole("tab", { name: "AWS" }).click();
+  await connections.getByLabel("서비스", { exact: true }).selectOption("aws");
   await connections.getByRole("checkbox").uncheck();
   await page.getByRole("button", { name: /^전체 서비스/ }).click();
   await expect(page.getByText("첫 번째 연결을 추가해 보세요")).toBeVisible();
@@ -49,13 +51,17 @@ test("browser preview cannot pretend a real login succeeded", async ({
   page,
 }) => {
   await page.getByRole("button", { name: "설정", exact: true }).click();
-  await page
-    .getByRole("tabpanel", { name: "서비스 연결" })
-    .getByRole("button", { name: "브라우저로 로그인" })
-    .click();
   await expect(
-    page.getByText("데스크톱 앱에서 사용할 수 있습니다."),
+    page.getByRole("button", { name: "브라우저로 계정 연결" }),
+  ).toHaveCount(0);
+  await page.locator(".authentication-details > summary").click();
+  await expect(
+    page.getByText("브라우저 미리보기에서는 가상 CLI 계정을 사용합니다."),
   ).toBeVisible();
+  await expect(
+    page.getByLabel("GitHub CLI 계정", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("API 토큰", { exact: true })).toHaveCount(0);
 });
 test("black theme stays dark across OS preferences and fits narrow windows", async ({
   page,

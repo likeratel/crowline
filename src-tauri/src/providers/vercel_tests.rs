@@ -59,8 +59,6 @@ fn attribution_requires_comparable_creator_identity() {
 fn ids_and_cursors_reject_query_injection() {
     assert!(validate_vercel_id("prj_123-Abc").is_ok());
     assert!(validate_vercel_id("prj_123&teamId=other").is_err());
-    assert!(validate_scope("demo-team").is_ok());
-    assert!(validate_scope("demo-team --token secret").is_err());
     let numeric = Pagination {
         next: Some(serde_json::json!(1_700_000_000_000_i64)),
     };
@@ -84,6 +82,35 @@ fn target() -> Target {
             ("teamId".into(), "team_123".into()),
         ]),
     }
+}
+
+#[test]
+fn target_validation_uses_explicit_personal_or_team_cli_scope() {
+    let team_target = target();
+    assert_eq!(
+        validate_vercel_target(&team_target),
+        Ok(("prj_123", Some("demo-team")))
+    );
+
+    let personal_target = Target {
+        id: "personal:prj_personal".into(),
+        provider: Provider::Vercel,
+        connection_id: "vercel:personal".into(),
+        name: "personal-site".into(),
+        description: None,
+        metadata: HashMap::from([
+            ("projectId".into(), "prj_personal".into()),
+            ("scopeSlug".into(), "sample-user".into()),
+        ]),
+    };
+    assert_eq!(
+        validate_vercel_target(&personal_target),
+        Ok(("prj_personal", Some("sample-user")))
+    );
+    assert_eq!(
+        deployment_dashboard_url(&personal_target, "dpl_personal"),
+        "https://vercel.com/sample-user/personal-site/dpl_personal"
+    );
 }
 
 #[test]

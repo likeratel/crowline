@@ -46,7 +46,7 @@
   width: var(--control-compact);
   height: var(--control-compact);
   color: #8e949e;
-  border-radius: 4px;
+  border-radius: var(--radius-compact);
 }
 .panel-icon:hover {
   color: #eee;
@@ -73,7 +73,7 @@
   min-height: var(--control-compact);
   padding: 0 8px;
   color: #818792;
-  border-radius: 4px;
+  border-radius: var(--radius-compact);
   font-size: 12px;
 }
 .panel-filters button[aria-pressed="true"] {
@@ -87,7 +87,7 @@
   height: var(--control-compact);
   padding: 0 28px 0 8px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-compact);
   color: #a4a9b2;
   background-color: transparent;
   background-position: right 8px center;
@@ -122,6 +122,7 @@
   background-position: right 4px center;
   border: 1px solid transparent;
   font-size: 12px;
+  line-height: 1;
   padding: 0 24px 0 0;
 }
 .panel-section {
@@ -150,6 +151,48 @@
   padding: 10px 17px;
   width: 100%;
   text-align: left;
+}
+.panel-run-entry {
+  display: flex;
+  align-items: stretch;
+}
+.panel-run-entry:hover,
+.panel-run-entry:focus-within {
+  background: #202227;
+}
+.panel-run-entry .panel-run {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+.panel-run-entry .panel-run:hover {
+  background: transparent;
+}
+.panel-run-entry .activity-dismiss {
+  display: grid;
+  place-items: center;
+  flex: 0 0 var(--control-compact);
+  width: var(--control-compact);
+  min-height: var(--control-compact);
+  margin: auto 8px auto 0;
+  color: #8e949e;
+  border-radius: var(--radius-compact);
+}
+.panel-run-entry .activity-dismiss:hover {
+  color: #e4e6e9;
+  background: #292c32;
+}
+.panel-scroll > .activity-undo,
+.panel-scroll > .activity-hide-feedback {
+  margin-inline: 16px;
+}
+.panel-scroll > .activity-undo {
+  color: #9298a3;
+  background: #202227;
+  border-color: #282a2f;
+}
+.panel-scroll > .activity-hide-feedback {
+  color: #c0a483;
 }
 .panel-run:hover {
   background: #202227;
@@ -267,6 +310,9 @@
   font-size: 12px;
   margin: 10px 16px;
   line-height: 1.6;
+}
+.tray-panel .settings-recovery {
+  margin: 10px 16px;
 }
 .panel-issues summary {
   cursor: pointer;

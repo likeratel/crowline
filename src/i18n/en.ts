@@ -27,6 +27,11 @@ export const en = {
   "common.moreCount": "View {count} more",
   "common.unknownActor": "Unknown actor",
   "boot.checking": "Checking connection status…",
+  "settingsRecovery.title": "Couldn’t load settings",
+  "settingsRecovery.locked": "Saving locked",
+  "settingsRecovery.body":
+    "The original settings are preserved. Restore read and write access to the settings file and folder, or restore a backup, then restart the app.",
+  "settingsRecovery.details": "Error details",
   "nav.monitoring": "Monitoring",
   "nav.serviceFilter": "Service filter",
   "nav.allServices": "All services",
@@ -59,7 +64,7 @@ export const en = {
     "View {count} runs with unknown actors in All runs",
   "dashboard.guideTitle": "What appears here",
   "dashboard.guideHistory":
-    "In-progress items started within the last 24 hours. Recently completed items use the selected range. Load older results per target from ‘View earlier deployments’.",
+    "In-progress items retain their last observed state beyond 24 hours until completion is confirmed. Recently completed items use the selected range. Load older results per target from ‘View earlier deployments’.",
   "dashboard.guideSettings":
     "‘Menu bar display’ controls the tray. ‘Connections’ controls the accounts and targets monitored by the dashboard.",
   "dashboard.pending":
@@ -68,9 +73,10 @@ export const en = {
   "dashboard.onboardingTitle": "Add your first connection",
   "dashboard.ready": "Ready when you are",
   "dashboard.onboardingBody":
-    "Use the GitHub and Vercel CLI sessions and AWS profiles already on this device to see active runs and recent deployments together.",
+    "Use service APIs and local CLI sessions on this device to see active runs and recent deployments together.",
   "dashboard.connectService": "Connect a service",
-  "dashboard.onboardingSteps": "Verify connection → select targets → save.",
+  "dashboard.onboardingSteps":
+    "Connect an account and select projects to start monitoring immediately.",
   "dashboard.activeEmpty": "No in-progress runs match the current filters.",
   "dashboard.completedEmpty": "No recent runs match the current filters.",
   "dashboard.needsAttention": "Needs attention",
@@ -113,14 +119,15 @@ export const en = {
   "accountPicker.addProfile": "Add profile connection",
   "accountPicker.addAccount": "Add account connection",
   "accountPicker.loginHelp":
-    "Use the login button below to authenticate this account. Your existing default CLI account will not change.",
+    "Connect this account using the authentication options below. Tokens stay in this device’s secure credential store.",
   "tray.summary": "Deployment summary",
   "tray.close": "Close panel",
   "tray.preview": "Preview · Sample data",
   "tray.scope": "{scope} · {visible}/{total} targets",
   "tray.mine": "My runs",
   "tray.all": "All runs",
-  "tray.checkScope": "Review display scope",
+  "tray.checkScope": "Review in dashboard",
+  "tray.moreInDashboard": "View {count} more in dashboard",
   "tray.pending":
     "Showing recent results · checking {count} targets for in-progress runs",
   "tray.issues": "{count} notices · some information may be delayed",
@@ -134,8 +141,7 @@ export const en = {
     "All targets are hidden. Review the menu bar display settings in the dashboard.",
   "tray.noResults":
     "No results match the actor, target, and time filters. Review the display scope and notices in the dashboard.",
-  "tray.activeEmpty":
-    "No in-progress runs started in the last 24 hours within this display scope.",
+  "tray.activeEmpty": "No in-progress runs within this display scope.",
   "tray.completedEmpty":
     "No recently completed runs match the selected range and display scope.",
   "tray.sectionsHidden": "Choose which sections to show from the dashboard.",
@@ -208,8 +214,9 @@ export const en = {
   "status.canceled": "Canceled",
   "status.skipped": "Skipped",
   "status.unknown": "Status unavailable",
-  "platform.github": "Uses the GitHub CLI sign-in on this device.",
-  "platform.vercel": "Uses the Vercel CLI sign-in on this device.",
+  "platform.github": "Choose an account signed in to the installed GitHub CLI.",
+  "platform.vercel":
+    "Uses the installed Vercel CLI, with separate sign-in for additional accounts.",
   "platform.aws": "Uses the selected AWS profile and region.",
   "platform.cliSession":
     "Uses the signed-in {provider} CLI session on this device.",

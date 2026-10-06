@@ -9,9 +9,17 @@ import { bridge, errorMessage } from "./bridge";
 import type { Snapshot, TargetHistory } from "./domain";
 import { createSettingsQueue } from "./settingsQueue";
 import { setActiveLanguage } from "./i18n";
+import { shouldRequestRefresh } from "./queryHealth";
+import { monitorCopy } from "./monitorCopy";
+import { getActiveLocale } from "./i18n";
+
+const RESUME_COOLDOWN_MS = 2_000;
 
 export function useMonitor() {
   const eventRevision = useRef(0);
+  const refreshRequest = useRef<Promise<void> | null>(null);
+  const lastResumeRequest = useRef(0);
+  const ensureSubscription = useRef<() => Promise<void>>(async () => {});
   const [queue] = useState(() =>
     createSettingsQueue(
       bridge.change,
@@ -25,7 +33,37 @@ export function useMonitor() {
   const [loadingMore, setLoadingMore] = useState(false);
   useEffect(() => {
     let disposed = false;
+    const resume = (event: Event) => {
+      const networkRestored = event.type === "online";
+      if (
+        (!networkRestored && document.visibilityState !== "visible") ||
+        !snapshot ||
+        !shouldRequestRefresh(snapshot, Date.now(), networkRestored) ||
+        (!networkRestored &&
+          Date.now() - lastResumeRequest.current < RESUME_COOLDOWN_MS)
+      )
+        return;
+      lastResumeRequest.current = Date.now();
+      void bridge.requestRefresh().catch(() => {
+        lastResumeRequest.current = 0;
+        if (!disposed)
+          setError(monitorCopy(getActiveLocale(), "recoveryError"));
+      });
+    };
+    window.addEventListener("focus", resume);
+    window.addEventListener("online", resume);
+    document.addEventListener("visibilitychange", resume);
+    return () => {
+      disposed = true;
+      window.removeEventListener("focus", resume);
+      window.removeEventListener("online", resume);
+      document.removeEventListener("visibilitychange", resume);
+    };
+  }, [snapshot]);
+  useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
+    let subscriptionRequest: Promise<void> | null = null;
     const update = (value: Snapshot) => {
       if (!disposed) {
         setActiveLanguage(value.settings.preferences.language);
@@ -34,11 +72,27 @@ export function useMonitor() {
         setSnapshot(value);
       }
     };
-    void (async () => {
-      try {
-        const unsubscribe = await bridge.subscribe(update, setError);
+    const subscribe = (): Promise<void> => {
+      if (unlisten) return Promise.resolve();
+      if (subscriptionRequest) return subscriptionRequest;
+      const request = (async () => {
+        const unsubscribe = await bridge.subscribe(update, (message) => {
+          if (!disposed) setError(message);
+        });
         if (disposed) unsubscribe();
         else unlisten = unsubscribe;
+      })();
+      subscriptionRequest = request;
+      const clearRequest = () => {
+        if (subscriptionRequest === request) subscriptionRequest = null;
+      };
+      void request.then(clearRequest, clearRequest);
+      return request;
+    };
+    ensureSubscription.current = subscribe;
+    void (async () => {
+      try {
+        await subscribe();
         const revision = eventRevision.current;
         const initial = await bridge.snapshot();
         if (!disposed && revision === eventRevision.current) {
@@ -52,25 +106,37 @@ export function useMonitor() {
     })();
     return () => {
       disposed = true;
+      if (ensureSubscription.current === subscribe)
+        ensureSubscription.current = async () => {};
       unlisten?.();
     };
   }, []);
-  const refresh = useCallback(async () => {
+  const refresh = useCallback((): Promise<void> => {
+    if (refreshRequest.current) return refreshRequest.current;
     setRefreshing(true);
     setError(null);
-    try {
-      const revision = eventRevision.current;
-      const value = await bridge.refresh();
-      if (revision === eventRevision.current) {
-        setActiveLanguage(value.settings.preferences.language);
-        queue.update(value.settings);
-        setSnapshot(value);
+    const request = (async () => {
+      try {
+        await ensureSubscription.current();
+        const revision = eventRevision.current;
+        const value = await bridge.refresh();
+        if (revision === eventRevision.current) {
+          setActiveLanguage(value.settings.preferences.language);
+          queue.update(value.settings);
+          setSnapshot(value);
+        }
+      } catch (cause) {
+        setError(errorMessage(cause));
       }
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setRefreshing(false);
-    }
+    })();
+    refreshRequest.current = request;
+    void request.finally(() => {
+      if (refreshRequest.current === request) {
+        refreshRequest.current = null;
+        setRefreshing(false);
+      }
+    });
+    return request;
   }, []);
   const reload = useCallback(async () => {
     setError(null);

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use tauri::{
     webview::{Color, WebviewWindowBuilder},
@@ -13,10 +13,22 @@ const DASHBOARD_WIDTH: f64 = 1_080.0;
 const DASHBOARD_HEIGHT: f64 = 780.0;
 const DASHBOARD_MIN_WIDTH: f64 = 720.0;
 const DASHBOARD_MIN_HEIGHT: f64 = 520.0;
+const TRAY_PRESS_NONE: u8 = 0;
+const TRAY_PRESS_STARTED_HIDDEN: u8 = 1;
+const TRAY_PRESS_STARTED_VISIBLE: u8 = 2;
+const TRAY_PRESS_CANCELLED: u8 = 3;
 
 #[derive(Default)]
 pub(crate) struct PanelFocusState {
     hide_on_blur: AtomicBool,
+    tray_press: AtomicU8,
+    deferred_blur: AtomicBool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PanelClickAction {
+    Show,
+    Hide,
 }
 
 impl PanelFocusState {
@@ -33,7 +45,58 @@ impl PanelFocusState {
         focused_event: bool,
         currently_focused: bool,
     ) -> bool {
-        !focused_event && !currently_focused && self.hide_on_blur.swap(false, Ordering::SeqCst)
+        if focused_event || currently_focused {
+            return false;
+        }
+        if matches!(
+            self.tray_press.load(Ordering::SeqCst),
+            TRAY_PRESS_STARTED_HIDDEN | TRAY_PRESS_STARTED_VISIBLE
+        ) {
+            self.deferred_blur.store(true, Ordering::SeqCst);
+            return false;
+        }
+        self.hide_on_blur.swap(false, Ordering::SeqCst)
+    }
+
+    fn tray_press_started(&self, panel_visible: bool) {
+        self.deferred_blur.store(false, Ordering::SeqCst);
+        self.tray_press.store(
+            if panel_visible {
+                TRAY_PRESS_STARTED_VISIBLE
+            } else {
+                TRAY_PRESS_STARTED_HIDDEN
+            },
+            Ordering::SeqCst,
+        );
+    }
+
+    fn tray_press_finished(&self, panel_visible: bool) -> Option<PanelClickAction> {
+        self.deferred_blur.store(false, Ordering::SeqCst);
+        match self.tray_press.swap(TRAY_PRESS_NONE, Ordering::SeqCst) {
+            TRAY_PRESS_STARTED_HIDDEN => Some(PanelClickAction::Show),
+            TRAY_PRESS_STARTED_VISIBLE => Some(PanelClickAction::Hide),
+            TRAY_PRESS_CANCELLED => None,
+            _ if panel_visible => Some(PanelClickAction::Hide),
+            _ => Some(PanelClickAction::Show),
+        }
+    }
+
+    fn tray_press_cancelled(&self, currently_focused: bool) -> bool {
+        let was_active = self
+            .tray_press
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |press| {
+                matches!(
+                    press,
+                    TRAY_PRESS_STARTED_HIDDEN | TRAY_PRESS_STARTED_VISIBLE
+                )
+                .then_some(TRAY_PRESS_CANCELLED)
+            })
+            .is_ok();
+        let blur_was_deferred = self.deferred_blur.swap(false, Ordering::SeqCst);
+        was_active
+            && blur_was_deferred
+            && !currently_focused
+            && self.hide_on_blur.swap(false, Ordering::SeqCst)
     }
 }
 
@@ -66,8 +129,13 @@ pub(crate) fn show_panel(app: &AppHandle, anchor: Option<(Rect, PhysicalPosition
         return;
     };
 
+    // Accessory applications can remain hidden when launched in the background.
+    // AppHandle::show calls NSApplication::unhide on macOS, so only use it while
+    // no dashboard exists that could be restored as an unintended side effect.
     #[cfg(target_os = "macos")]
-    let _ = app.show();
+    if app.get_webview_window(DASHBOARD_LABEL).is_none() {
+        let _ = app.show();
+    }
     if let Some((rect, click_position)) = anchor {
         position_panel(app, &panel, rect, click_position);
     }
@@ -80,16 +148,74 @@ pub(crate) fn show_panel(app: &AppHandle, anchor: Option<(Rect, PhysicalPosition
     }
 }
 
-pub(crate) fn toggle_panel(app: &AppHandle, rect: Rect, click_position: PhysicalPosition<f64>) {
+pub(crate) fn begin_tray_panel_click(app: &AppHandle) {
     let Some(panel) = app.get_webview_window(MAIN_LABEL) else {
         return;
     };
-
-    if panel.is_visible().unwrap_or(false) {
-        let _ = hide_panel(app);
-    } else {
-        show_panel(app, Some((rect, click_position)));
+    let panel_visible = panel.is_visible().unwrap_or(false);
+    if let Some(state) = app.try_state::<PanelFocusState>() {
+        state.tray_press_started(panel_visible);
     }
+}
+
+pub(crate) fn finish_tray_panel_click(
+    app: &AppHandle,
+    rect: Rect,
+    click_position: PhysicalPosition<f64>,
+) {
+    let Some(panel) = app.get_webview_window(MAIN_LABEL) else {
+        return;
+    };
+    let panel_visible = panel.is_visible().unwrap_or(false);
+    let action = if let Some(state) = app.try_state::<PanelFocusState>() {
+        state.tray_press_finished(panel_visible)
+    } else if panel_visible {
+        Some(PanelClickAction::Hide)
+    } else {
+        Some(PanelClickAction::Show)
+    };
+    let Some(action) = action else {
+        return;
+    };
+
+    match action {
+        PanelClickAction::Show => show_panel(app, Some((rect, click_position))),
+        PanelClickAction::Hide => {
+            let _ = hide_panel(app);
+        }
+    }
+}
+
+pub(crate) fn cancel_tray_panel_click(app: &AppHandle) {
+    let Some(panel) = app.get_webview_window(MAIN_LABEL) else {
+        return;
+    };
+    let currently_focused = panel.is_focused().unwrap_or(true);
+    if app
+        .try_state::<PanelFocusState>()
+        .is_some_and(|state| state.tray_press_cancelled(currently_focused))
+    {
+        let _ = hide_panel(app);
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn should_show_panel_on_reopen(app: &AppHandle) -> bool {
+    should_show_panel_for_window_states(app.get_webview_window(DASHBOARD_LABEL).into_iter().map(
+        |window| {
+            (
+                window.is_visible().unwrap_or(true),
+                window.is_minimized().unwrap_or(false),
+            )
+        },
+    ))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn should_show_panel_for_window_states(states: impl IntoIterator<Item = (bool, bool)>) -> bool {
+    !states
+        .into_iter()
+        .any(|(visible, minimized)| visible && !minimized)
 }
 
 pub(crate) fn open_dashboard(app: &AppHandle) -> Result<(), String> {
@@ -394,6 +520,73 @@ mod tests {
         state.panel_shown();
         assert!(state.should_hide_for_focus_change(false, false));
         assert!(!state.should_hide_for_focus_change(false, false));
+    }
+
+    #[test]
+    fn tray_click_uses_visibility_at_mouse_down() {
+        let state = PanelFocusState::default();
+
+        state.tray_press_started(false);
+        assert_eq!(
+            state.tray_press_finished(false),
+            Some(PanelClickAction::Show)
+        );
+
+        state.panel_shown();
+        state.tray_press_started(true);
+        assert!(!state.should_hide_for_focus_change(false, false));
+        assert_eq!(
+            state.tray_press_finished(true),
+            Some(PanelClickAction::Hide)
+        );
+        state.panel_hidden();
+        assert!(!state.should_hide_for_focus_change(false, false));
+    }
+
+    #[test]
+    fn abandoned_tray_press_applies_a_deferred_outside_blur() {
+        let state = PanelFocusState::default();
+
+        state.panel_shown();
+        state.tray_press_started(true);
+        assert!(!state.should_hide_for_focus_change(false, false));
+        assert!(state.tray_press_cancelled(false));
+        assert!(!state.should_hide_for_focus_change(false, false));
+    }
+
+    #[test]
+    fn cancelled_tray_press_consumes_a_late_mouse_up() {
+        let state = PanelFocusState::default();
+
+        state.panel_shown();
+        state.tray_press_started(true);
+        assert!(!state.should_hide_for_focus_change(false, false));
+        assert!(state.tray_press_cancelled(false));
+        assert_eq!(state.tray_press_finished(false), None);
+        assert!(!state.should_hide_for_focus_change(false, false));
+
+        state.tray_press_started(false);
+        assert_eq!(
+            state.tray_press_finished(false),
+            Some(PanelClickAction::Show)
+        );
+    }
+
+    #[test]
+    fn reopen_preserves_unminimized_windows_but_not_minimized_ones() {
+        // A panel-only application can always retry showing its panel, even
+        // when AppKit reports the panel visible but the app is backgrounded.
+        assert!(should_show_panel_for_window_states([]));
+        assert!(should_show_panel_for_window_states([(false, false)]));
+        assert!(should_show_panel_for_window_states([
+            (false, false),
+            (true, true)
+        ]));
+        assert!(!should_show_panel_for_window_states([
+            (false, false),
+            (true, false)
+        ]));
+        assert!(!should_show_panel_for_window_states([(true, false)]));
     }
 
     #[test]

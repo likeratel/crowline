@@ -76,6 +76,7 @@
   font-size: 12px;
 }
 .settings-field select {
+  width: 100%;
   min-height: var(--control-height);
   min-width: 0;
 }
@@ -140,4 +141,9 @@
   color: var(--muted);
   margin-block: var(--space-2);
   overflow-wrap: anywhere;
+}
+.preference-bulk {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-3);
 }

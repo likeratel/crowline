@@ -12,7 +12,7 @@ test("omits workspace placeholders and keeps connection help compact", async ({
   );
   await page.getByText("표시 기준 안내", { exact: true }).click();
   await expect(
-    page.getByText(/진행 중은 시작 후 24시간 이내 항목/),
+    page.getByText(/24시간을 넘겨도 종료가 확인될 때까지 유지됩니다/),
   ).toBeVisible();
   await expect(page.getByText("연결된 프로젝트", { exact: true })).toHaveCount(
     0,
@@ -28,8 +28,9 @@ test("omits workspace placeholders and keeps connection help compact", async ({
   await expect(
     connections.getByText("YOUR WORKSPACE", { exact: true }),
   ).toHaveCount(0);
-  const help = connections.locator("details.connection-help");
-  await expect(help.locator("summary")).toHaveText("연결 방법");
+  await connections.locator(".authentication-details > summary").click();
+  const help = connections.locator("details.connection-help").first();
+  await expect(help.locator("summary")).toHaveText("CLI 설치·업데이트 안내");
   await help.locator("summary").click();
   await expect(help).toContainText("gh auth login");
   await page.screenshot({ path: "artifacts/crowline-dialog-guide-full.png" });
@@ -40,7 +41,7 @@ test("uses 36px dashboard controls and a custom select indicator", async ({
 }) => {
   const heights = await page
     .locator(
-      ".toolbar .segmented, .toolbar .search-box, .toolbar .period-select",
+      ".scope-default-choice .segmented, .toolbar .search-box, .toolbar .period-select",
     )
     .evaluateAll((controls) =>
       controls.map((control) =>
@@ -80,6 +81,7 @@ test("keeps a single scrollable settings page with reachable connection actions 
       .evaluate((catalog) => catalog.scrollHeight <= catalog.clientHeight),
   ).toBe(true);
 
+  await connections.getByRole("button", { name: "서비스 찾아보기" }).click();
   const githubTab = connections.getByRole("tab", {
     name: "GitHub Actions",
     exact: true,
@@ -131,7 +133,7 @@ test("collapses the empty active section and keeps recent rows readable", async 
   );
 });
 
-test("shows the service catalog immediately and omits the sidebar authentication note", async ({
+test("prioritizes account actions and opens the service catalog on request", async ({
   page,
 }) => {
   await expect(
@@ -139,6 +141,9 @@ test("shows the service catalog immediately and omits the sidebar authentication
   ).toHaveCount(0);
   await page.getByRole("button", { name: "설정", exact: true }).click();
   const connections = page.getByRole("tabpanel", { name: "서비스 연결" });
+  await expect(connections.getByLabel("플랫폼 검색")).not.toBeVisible();
+  await expect(connections.getByLabel("서비스", { exact: true })).toBeVisible();
+  await connections.getByRole("button", { name: "서비스 찾아보기" }).click();
   await expect(connections.getByLabel("플랫폼 검색")).toBeVisible();
   await expect(
     connections.getByRole("tab", { name: "Vercel", exact: true }),

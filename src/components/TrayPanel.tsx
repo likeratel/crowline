@@ -1,3 +1,8 @@
+import { uxCopy } from "../uxCopy";
+import { QueryHealthSummary } from "./QueryHealthSummary";
+import { summarizeQueryHealth } from "../queryHealth";
+import { monitorCopy } from "../monitorCopy";
+import { isLongRunning } from "../activityView";
 import { useEffect, useState } from "react";
 import {
   ArrowUpRight,
@@ -21,6 +26,11 @@ import {
   type Activity,
 } from "../domain";
 import { ProviderIcon } from "./ProviderIcon";
+import { useActivityDismissal } from "../useActivityDismissal";
+import { ActivityUndo } from "./ActivityUndo";
+import { SettingsRecoveryNotice } from "./SettingsRecoveryNotice";
+import { activityCopy } from "../activityCopy";
+import { activityIdentity, activityKeyString } from "../domain";
 import { useMonitor } from "../useMonitor";
 import {
   formatDuration,
@@ -30,12 +40,18 @@ import {
 } from "../i18n";
 import "../styles/panel.css";
 
+const lockedSettingsChange = async () => false;
+
 function RunRow({
   item,
   onError,
+  onHide,
+  settingsLocked,
 }: {
   item: Activity;
   onError: (message: string) => void;
+  onHide: (activity: Activity) => Promise<void>;
+  settingsLocked: boolean;
 }) {
   const { locale, t } = useI18n();
   const workflow = item.workflowName?.trim();
@@ -56,63 +72,81 @@ function RunRow({
               ? Minus
               : Circle;
   return (
-    <button
-      className="panel-run"
-      onClick={() =>
-        void bridge
-          .open(item.url)
-          .catch((cause: unknown) => onError(errorMessage(cause)))
-      }
-    >
-      <span
-        className="panel-provider"
-        title={PROVIDER_NAMES[item.provider]}
-        aria-label={`${PROVIDER_NAMES[item.provider]} · ${t(`status.${item.status}`)}`}
-        role="img"
+    <div className="panel-run-entry">
+      <button
+        className="panel-run"
+        onClick={() =>
+          void bridge
+            .open(item.url)
+            .catch((cause: unknown) => onError(errorMessage(cause)))
+        }
       >
-        <ProviderIcon provider={item.provider} size={22} />
-      </span>
-      <span className="panel-run-status" title={t(`status.${item.status}`)}>
-        <Icon
-          size={16}
-          className={`run-symbol ${item.status} ${item.status === "running" ? "spin" : ""}`}
-          aria-hidden="true"
-        />
-      </span>
-      <span className="panel-run-copy">
-        <span className="panel-run-heading" title={heading}>
-          {showWorkflow && (
-            <>
-              <span className="panel-run-workflow">{workflow}</span>
-              <span aria-hidden="true"> · </span>
-            </>
+        <span
+          className="panel-provider"
+          title={PROVIDER_NAMES[item.provider]}
+          aria-label={`${PROVIDER_NAMES[item.provider]} · ${t(`status.${item.status}`)}`}
+          role="img"
+        >
+          <ProviderIcon provider={item.provider} size={22} />
+        </span>
+        <span className="panel-run-status" title={t(`status.${item.status}`)}>
+          <Icon
+            size={16}
+            className={`run-symbol ${item.status} ${item.status === "running" ? "spin" : ""}`}
+            aria-hidden="true"
+          />
+        </span>
+        <span className="panel-run-copy">
+          <span className="panel-run-heading" title={heading}>
+            {showWorkflow && (
+              <>
+                <span className="panel-run-workflow">{workflow}</span>
+                <span aria-hidden="true"> · </span>
+              </>
+            )}
+            <span className="panel-run-title">{item.title}</span>
+          </span>
+          <span className="panel-run-meta">
+            <span className="panel-run-context" title={context}>
+              {context}
+            </span>
+            <span className="panel-run-actor" title={actor}>
+              {" "}
+              · {actor}
+            </span>
+          </span>
+          {isLongRunning(item) && (
+            <span className="panel-run-old">
+              {monitorCopy(locale, "longRunning")}
+            </span>
           )}
-          <span className="panel-run-title">{item.title}</span>
         </span>
-        <span className="panel-run-meta">
-          <span className="panel-run-context" title={context}>
-            {context}
-          </span>
-          <span className="panel-run-actor" title={actor}>
-            {" "}
-            · {actor}
-          </span>
+        <span className="panel-run-time" title={item.rawStatus}>
+          {isActive(item) && item.provider !== "aws"
+            ? formatDuration(
+                item.startedAt,
+                item.finishedAt ?? Date.now(),
+                locale,
+              )
+            : item.finishedAt
+              ? formatRelativeTime(item.finishedAt, locale)
+              : t("activity.updated", {
+                  time: formatRelativeTime(item.updatedAt, locale),
+                })}
         </span>
-      </span>
-      <span className="panel-run-time" title={item.rawStatus}>
-        {isActive(item) && item.provider !== "aws"
-          ? formatDuration(
-              item.startedAt,
-              item.finishedAt ?? Date.now(),
-              locale,
-            )
-          : item.finishedAt
-            ? formatRelativeTime(item.finishedAt, locale)
-            : t("activity.updated", {
-                time: formatRelativeTime(item.updatedAt, locale),
-              })}
-      </span>
-    </button>
+      </button>
+      {item.targetId && (
+        <button
+          className="activity-dismiss"
+          aria-label={`${activityCopy(locale, "hide")}: ${item.title}`}
+          title={activityCopy(locale, "hide")}
+          disabled={settingsLocked}
+          onClick={() => void onHide(item)}
+        >
+          <X size={14} aria-hidden="true" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -121,13 +155,17 @@ function RunSection({
   items,
   limit,
   onError,
+  onHide,
   empty,
+  settingsLocked,
 }: {
   title: string;
   empty: string;
   items: Activity[];
   limit: number;
   onError: (message: string) => void;
+  onHide: (activity: Activity) => Promise<void>;
+  settingsLocked: boolean;
 }) {
   const { t } = useI18n();
   return (
@@ -141,9 +179,11 @@ function RunSection({
           .slice(0, limit)
           .map((item) => (
             <RunRow
-              key={`${item.provider}:${item.id}`}
+              key={activityKeyString(activityIdentity(item))}
               item={item}
               onError={onError}
+              onHide={onHide}
+              settingsLocked={settingsLocked}
             />
           ))
       ) : (
@@ -158,7 +198,7 @@ function RunSection({
               .catch((cause: unknown) => onError(errorMessage(cause)))
           }
         >
-          {t("common.moreCount", { count: items.length - limit })}{" "}
+          {t("tray.moreInDashboard", { count: items.length - limit })}{" "}
           <ChevronRight size={12} />
         </button>
       )}
@@ -182,6 +222,11 @@ function TrayPanelContent({
 }) {
   const { locale, t } = useI18n();
   const { snapshot, refreshing: busy, error, setError, refresh } = monitor;
+  const settingsLocked = Boolean(snapshot?.settingsError);
+  const dismissal = useActivityDismissal(
+    settingsLocked ? lockedSettingsChange : monitor.change,
+    setError,
+  );
   const [, tick] = useState(0);
   useEffect(() => {
     document.documentElement.classList.add("panel-mode");
@@ -200,12 +245,33 @@ function TrayPanelContent({
     };
   }, [setError]);
   const items = snapshot ? panelActivities(snapshot) : [];
-  const visibleTargets =
+  const panelTargets =
     snapshot?.settings.targets.filter(
       (target) =>
         snapshot.settings.panel.providers.includes(target.provider) &&
         !snapshot.settings.panel.hiddenTargets.includes(targetKey(target)),
-    ).length ?? 0;
+    ) ?? [];
+  const visibleTargets = panelTargets.length;
+  const queryHealth = snapshot
+    ? summarizeQueryHealth(snapshot, panelTargets)
+    : null;
+  const pendingCount = snapshot
+    ? panelTargets.filter((target) =>
+        snapshot.pendingTargets.includes(targetKey(target)),
+      ).length
+    : 0;
+  const panelIssues =
+    snapshot?.issues.filter(
+      (issue) =>
+        !snapshot.settings.targets.length ||
+        panelTargets.some(
+          (target) =>
+            target.provider === issue.provider &&
+            (!issue.connectionId ||
+              issue.connectionId === target.connectionId) &&
+            (!issue.targetId || issue.targetId === target.id),
+        ),
+    ) ?? [];
   const active = items.filter(isActive);
   const complete = snapshot
     ? sortPanelActivities(latestCompleted(items), snapshot.settings.panel)
@@ -250,9 +316,13 @@ function TrayPanelContent({
           <span>
             {t("tray.scope", {
               scope:
-                snapshot.settings.scope === "mine"
-                  ? t("tray.mine")
-                  : t("tray.all"),
+                Object.keys(snapshot.settings.displayScopes.providers).length >
+                  0 ||
+                Object.keys(snapshot.settings.displayScopes.targets).length > 0
+                  ? uxCopy(locale, "mixedScope")
+                  : snapshot.settings.scope === "mine"
+                    ? t("tray.mine")
+                    : t("tray.all"),
               visible: visibleTargets,
               total: snapshot.settings.targets.length,
             })}
@@ -263,9 +333,22 @@ function TrayPanelContent({
         </div>
       )}
       <div className="panel-scroll">
-        {snapshot && snapshot.pendingTargets.length > 0 && (
+        {snapshot && panelTargets.length > 0 && (
+          <div className="panel-query-summary">
+            <QueryHealthSummary
+              snapshot={snapshot}
+              targets={panelTargets}
+              compact
+            />
+          </div>
+        )}
+        <SettingsRecoveryNotice error={snapshot?.settingsError} />
+        {dismissal.lastHidden && !settingsLocked && (
+          <ActivityUndo onUndo={dismissal.undo} busy={dismissal.undoing} />
+        )}
+        {snapshot && pendingCount > 0 && (
           <p className="panel-empty-row" role="status">
-            {t("tray.pending", { count: snapshot.pendingTargets.length })}
+            {t("tray.pending", { count: pendingCount })}
           </p>
         )}
         {error && (
@@ -273,12 +356,10 @@ function TrayPanelContent({
             {error}
           </p>
         )}
-        {snapshot && snapshot.issues.length > 0 && (
+        {panelIssues.length > 0 && (
           <details className="panel-issues">
-            <summary>
-              {t("tray.issues", { count: snapshot.issues.length })}
-            </summary>
-            {snapshot.issues.map((issue, index) => (
+            <summary>{t("tray.issues", { count: panelIssues.length })}</summary>
+            {panelIssues.map((issue, index) => (
               <p key={`${issue.provider}:${index}`}>
                 {PROVIDER_NAMES[issue.provider]} · {issue.message}
               </p>
@@ -289,7 +370,7 @@ function TrayPanelContent({
           <p className="panel-empty-row">
             {error ? t("tray.checkConnection") : t("tray.connecting")}
           </p>
-        ) : snapshot.settings.targets.length === 0 ? (
+        ) : snapshot.settings.targets.length === 0 && !settingsLocked ? (
           <div className="panel-onboarding">
             <h1>{t("tray.onboardingTitle")}</h1>
             <p>{t("tray.onboardingBody")}</p>
@@ -313,6 +394,8 @@ function TrayPanelContent({
                 items={active}
                 limit={snapshot.settings.panel.rowLimit}
                 onError={setError}
+                onHide={dismissal.hide}
+                settingsLocked={settingsLocked}
               />
             )}
             {snapshot.settings.panel.showCompleted && (
@@ -326,6 +409,8 @@ function TrayPanelContent({
                 items={complete}
                 limit={snapshot.settings.panel.rowLimit}
                 onError={setError}
+                onHide={dismissal.hide}
+                settingsLocked={settingsLocked}
               />
             )}
             {!snapshot.settings.panel.showActive &&
@@ -339,6 +424,8 @@ function TrayPanelContent({
                 items={unresolved}
                 limit={snapshot.settings.panel.rowLimit}
                 onError={setError}
+                onHide={dismissal.hide}
+                settingsLocked={settingsLocked}
               />
             )}
           </>
@@ -348,10 +435,8 @@ function TrayPanelContent({
         <span>
           {busy
             ? t("tray.checking")
-            : snapshot?.lastUpdatedAt
-              ? t("tray.checked", {
-                  time: formatRelativeTime(snapshot.lastUpdatedAt, locale),
-                })
+            : queryHealth
+              ? monitorCopy(locale, queryHealth.state)
               : t("tray.waiting")}
         </span>
         <button onClick={openDashboard}>

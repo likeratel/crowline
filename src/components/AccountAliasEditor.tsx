@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { Check } from "lucide-react";
 import { useSettingsChanges } from "../settingsChangesContext";
 import { useI18n } from "../i18n";
 import { settingsCopy } from "../settingsCopy";
+import { uxCopy } from "../uxCopy";
 import { SettingFeedback } from "./SettingFeedback";
 
-const ALIAS_DELAY_MS = 500;
 export function AccountAliasEditor({
   accountId,
   name,
@@ -15,63 +16,95 @@ export function AccountAliasEditor({
   disabled: boolean;
 }) {
   const { change } = useSettingsChanges();
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const [draft, setDraft] = useState<string | null>(null);
-  const pending = useRef<string | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const mounted = useRef(true);
-  const sequence = useRef(0);
-  const flush = () => {
-    clearTimeout(timer.current);
-    const text = pending.current;
-    if (text === null) return;
-    pending.current = null;
-    const id = sequence.current;
-    void change({
-      kind: "accountAlias",
-      connectionId: accountId,
-      alias: text.trim() || null,
-    }).then((success) => {
-      if (success && mounted.current && sequence.current === id) setDraft(null);
-    });
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const dirty = draft !== null && draft !== name;
+  const cancel = () => {
+    setDraft(null);
+    setSaved(false);
   };
-  const flushRef = useRef(flush);
-  flushRef.current = flush;
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      flushRef.current();
-    };
-  }, []);
+  const save = async (retry = false) => {
+    if ((!dirty && !retry) || saving || disabled) return;
+    setSaving(true);
+    setSaved(false);
+    try {
+      const success = await change({
+        kind: "accountAlias",
+        connectionId: accountId,
+        alias: (draft ?? name).trim() || null,
+      });
+      if (success) {
+        setDraft(null);
+        setSaved(true);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
-    <div className="account-alias-editor">
+    <form
+      className="account-alias-editor"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
       <label className="account-alias-field">
         {settingsCopy(locale, "alias")}
         <input
           autoFocus
           aria-label={settingsCopy(locale, "alias")}
-          disabled={disabled}
+          disabled={disabled || saving}
           value={draft ?? name}
           maxLength={80}
           onChange={(event) => {
-            const value = event.currentTarget.value;
-            sequence.current += 1;
-            setDraft(value);
-            pending.current = value;
-            clearTimeout(timer.current);
-            timer.current = setTimeout(flush, ALIAS_DELAY_MS);
+            setDraft(event.currentTarget.value);
+            setSaved(false);
           }}
-          onBlur={flush}
           onKeyDown={(event) => {
-            if (event.key === "Enter") {
+            if (event.key === "Escape") {
               event.preventDefault();
-              flush();
+              cancel();
             }
           }}
         />
       </label>
-      <SettingFeedback changeKey={`accountAlias:${accountId}`} />
-    </div>
+      <p className="field-help">{uxCopy(locale, "aliasHelp")}</p>
+      <div className="form-actions">
+        <button
+          className="button primary"
+          type="submit"
+          disabled={disabled || saving || !dirty}
+        >
+          {saving
+            ? settingsCopy(locale, "saving")
+            : uxCopy(locale, "saveAlias")}
+        </button>
+        <button
+          className="button"
+          type="button"
+          disabled={saving || !dirty}
+          onClick={cancel}
+        >
+          {t("common.cancel")}
+        </button>
+        <span className="save-result" role="status">
+          {saved ? (
+            <>
+              <Check size={14} />
+              {uxCopy(locale, "saved")}
+            </>
+          ) : dirty ? (
+            uxCopy(locale, "unsaved")
+          ) : null}
+        </span>
+      </div>
+      <SettingFeedback
+        changeKey={`accountAlias:${accountId}`}
+        onRetry={() => save(true)}
+      />
+    </form>
   );
 }

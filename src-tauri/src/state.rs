@@ -1,3 +1,6 @@
+mod auth;
+mod refresh_wake;
+
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
@@ -9,13 +12,15 @@ use chrono::Utc;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::sync::{Mutex, RwLock};
 
+use refresh_wake::RefreshWake;
+
 use crate::{
     cli::Toolchain,
     credentials::BitbucketCredential,
     models::{
         Account, AccountMode, Activity, ActivityStatus, Connection, ConnectionStatus, Issue,
-        LoginStatus, Ownership, Provider, Scope, Settings, SettingsChange, Snapshot, Target,
-        LOCAL_GITHUB_ID, LOCAL_VERCEL_ID, MAX_TARGETS,
+        LoginStatus, Ownership, Provider, QueryHealth, Scope, Settings, SettingsChange, Snapshot,
+        Target, LOCAL_GITHUB_ID, LOCAL_VERCEL_ID, MAX_HIDDEN_ACTIVITIES, MAX_TARGETS,
     },
     notifications::{NativeNotification, NotificationEngine},
     providers::aws,
@@ -57,6 +62,7 @@ pub struct AppState {
     store: SettingsStore,
     snapshot: RwLock<Snapshot>,
     refresh_lock: Mutex<()>,
+    refresh_wake: RefreshWake,
     publish_lock: Mutex<()>,
     settings_revision: AtomicU64,
     refresh_epoch: AtomicU64,
@@ -68,25 +74,13 @@ pub struct AppState {
 impl AppState {
     pub async fn initialize(app_data_dir: std::path::PathBuf, resource_dir: Option<&Path>) -> Self {
         let store = SettingsStore::new(app_data_dir.clone());
-        let (settings, initial_issue) = match store.load().await {
-            Ok(settings) => (settings, None),
-            Err(message) => (
-                Settings::default(),
-                Some(Issue {
-                    provider: Provider::Github,
-                    connection_id: None,
-                    message,
-                    target_id: None,
-                }),
-            ),
-        };
-        let mut snapshot = Snapshot::initial(settings);
-        snapshot.issues.extend(initial_issue);
+        let snapshot = load_initial_snapshot(&store).await;
         Self {
             tools: Toolchain::discover(resource_dir, &app_data_dir).await,
             store,
             snapshot: RwLock::new(snapshot),
             refresh_lock: Mutex::new(()),
+            refresh_wake: RefreshWake::default(),
             publish_lock: Mutex::new(()),
             settings_revision: AtomicU64::new(0),
             refresh_epoch: AtomicU64::new(0),
@@ -98,6 +92,14 @@ impl AppState {
 
     pub async fn snapshot(&self) -> Snapshot {
         self.snapshot.read().await.clone()
+    }
+
+    pub fn request_refresh(&self) {
+        self.refresh_wake.request();
+    }
+
+    pub(crate) fn ensure_settings_writable(&self) -> Result<(), String> {
+        self.store.ensure_writable()
     }
 
     pub async fn account(
@@ -116,34 +118,6 @@ impl AppState {
             .ok_or_else(|| "The selected account does not exist for this provider.".to_owned())
     }
 
-    pub async fn register_login_attempt(
-        &self,
-        connection_id: &str,
-        provider: Provider,
-        waiting: LoginStatus,
-    ) -> Result<(Account, LoginStatus, bool), String> {
-        let _publish_guard = self.publish_lock.lock().await;
-        let account = self
-            .snapshot
-            .read()
-            .await
-            .settings
-            .accounts
-            .iter()
-            .find(|account| account.id == connection_id && account.provider == provider)
-            .cloned()
-            .ok_or_else(|| "The selected account does not exist for this provider.".to_owned())?;
-        let mut statuses = self.login_statuses.lock().await;
-        if let Some(existing) = statuses
-            .get(connection_id)
-            .filter(|status| status.state == crate::models::LoginState::Waiting)
-        {
-            return Ok((account, existing.clone(), false));
-        }
-        statuses.insert(connection_id.to_owned(), waiting.clone());
-        Ok((account, waiting, true))
-    }
-
     pub async fn save_settings<P: SnapshotPublisher>(
         &self,
         mut settings: Settings,
@@ -153,6 +127,7 @@ impl AppState {
         settings.validate()?;
         let _publish_guard = self.publish_lock.lock().await;
         let previous = self.snapshot.read().await.clone();
+        validate_new_hidden_activities(&previous, &settings)?;
         if settings.accounts != previous.settings.accounts {
             return Err("Account definitions can only be changed with account commands.".into());
         }
@@ -167,12 +142,35 @@ impl AppState {
     ) -> Result<Settings, String> {
         let _publish_guard = self.publish_lock.lock().await;
         let previous = self.snapshot.read().await.clone();
-        let settings = apply_settings_change(previous.settings.clone(), change)?;
+        let activity_visibility = matches!(&change, SettingsChange::ActivityVisibility { .. });
+        let settings =
+            apply_settings_change(previous.settings.clone(), change, &previous.activities)?;
         if settings.accounts != previous.settings.accounts {
             return Err("Account definitions can only be changed with account commands.".into());
         }
+        if activity_visibility {
+            return self
+                .publish_activity_visibility_locked(settings, previous, publisher)
+                .await;
+        }
         self.publish_settings_locked(settings, previous, publisher)
             .await
+    }
+
+    async fn publish_activity_visibility_locked<P: SnapshotPublisher>(
+        &self,
+        settings: Settings,
+        previous: Snapshot,
+        publisher: &P,
+    ) -> Result<Settings, String> {
+        let saved = self.store.save(settings).await?;
+        let updated = Snapshot {
+            settings: saved.clone(),
+            ..previous
+        };
+        *self.snapshot.write().await = updated.clone();
+        publisher.publish_snapshot(&updated);
+        Ok(saved)
     }
 
     async fn publish_settings_locked<P: SnapshotPublisher>(
@@ -181,6 +179,8 @@ impl AppState {
         previous: Snapshot,
         publisher: &P,
     ) -> Result<Settings, String> {
+        self.ensure_settings_writable()?;
+        add_default_rules_for_new_targets(&mut settings, &previous.settings);
         settings.prune_target_references();
         settings.validate()?;
         for account in &settings.accounts {
@@ -191,7 +191,13 @@ impl AppState {
             .lock()
             .await
             .sync_preferences(&saved.preferences.notifications);
-        self.settings_revision.fetch_add(1, Ordering::SeqCst);
+        let accounts_changed = saved.accounts != previous.settings.accounts;
+        let targets_changed = saved.targets != previous.settings.targets;
+        let history_hours_changed = saved.history_hours != previous.settings.history_hours;
+        let refresh_inputs_changed = accounts_changed || targets_changed || history_hours_changed;
+        if refresh_inputs_changed {
+            self.settings_revision.fetch_add(1, Ordering::SeqCst);
+        }
         let account_ids: HashSet<&str> = saved
             .accounts
             .iter()
@@ -208,10 +214,93 @@ impl AppState {
                 )
             })
             .collect();
+        let unchanged_target_keys: HashSet<String> = if history_hours_changed {
+            HashSet::new()
+        } else {
+            let previous_accounts: HashMap<&str, &Account> = previous
+                .settings
+                .accounts
+                .iter()
+                .map(|account| (account.id.as_str(), account))
+                .collect();
+            let unchanged_account_ids: HashSet<&str> = saved
+                .accounts
+                .iter()
+                .filter(|account| {
+                    previous_accounts
+                        .get(account.id.as_str())
+                        .is_some_and(|previous| *previous == *account)
+                })
+                .map(|account| account.id.as_str())
+                .collect();
+            let previous_targets: HashMap<(&str, Provider, &str), &Target> = previous
+                .settings
+                .targets
+                .iter()
+                .map(|target| {
+                    (
+                        (
+                            target.connection_id.as_str(),
+                            target.provider,
+                            target.id.as_str(),
+                        ),
+                        target,
+                    )
+                })
+                .collect();
+            saved
+                .targets
+                .iter()
+                .filter(|target| {
+                    unchanged_account_ids.contains(target.connection_id.as_str())
+                        && previous_targets
+                            .get(&(
+                                target.connection_id.as_str(),
+                                target.provider,
+                                target.id.as_str(),
+                            ))
+                            .is_some_and(|previous| *previous == *target)
+                })
+                .map(Target::key)
+                .collect()
+        };
+        let history = previous
+            .history
+            .iter()
+            .filter(|entry| {
+                unchanged_target_keys.contains(&format!(
+                    "{}:{}:{}",
+                    entry.provider.as_str(),
+                    entry.connection_id,
+                    entry.target_id
+                ))
+            })
+            .cloned()
+            .collect();
+        let pending_targets = previous
+            .pending_targets
+            .iter()
+            .filter(|key| unchanged_target_keys.contains(*key))
+            .cloned()
+            .collect();
+        let query_health = previous
+            .query_health
+            .iter()
+            .filter(|entry| {
+                unchanged_target_keys.contains(&format!(
+                    "{}:{}:{}",
+                    entry.provider.as_str(),
+                    entry.connection_id,
+                    entry.target_id
+                ))
+            })
+            .cloned()
+            .collect();
         let updated = Snapshot {
             settings: saved.clone(),
-            history: Vec::new(),
-            pending_targets: Vec::new(),
+            history,
+            pending_targets,
+            query_health,
             connections: previous
                 .connections
                 .into_iter()
@@ -240,6 +329,7 @@ impl AppState {
                 .collect(),
             ..previous
         };
+        let updated = with_poll_interval(updated);
         *self.snapshot.write().await = updated.clone();
         publisher.publish_snapshot(&updated);
         Ok(saved)
@@ -252,8 +342,9 @@ impl AppState {
         profile: Option<String>,
         publisher: &P,
     ) -> Result<Account, String> {
+        self.ensure_settings_writable()?;
         let account = match provider {
-            Provider::Github | Provider::Vercel => {
+            Provider::Github | Provider::GithubDeployments | Provider::Vercel => {
                 if profile.is_some() {
                     return Err("Only AWS connections accept a profile.".into());
                 }
@@ -263,6 +354,7 @@ impl AppState {
                     label,
                     mode: AccountMode::Isolated,
                     profile: None,
+                    cli_username: None,
                 }
             }
             Provider::Aws => {
@@ -278,6 +370,7 @@ impl AppState {
                     label,
                     mode: AccountMode::Local,
                     profile: Some(profile),
+                    cli_username: None,
                 }
             }
             _ => {
@@ -293,6 +386,7 @@ impl AppState {
                     label,
                     mode: AccountMode::Local,
                     profile: None,
+                    cli_username: None,
                 }
             }
         };
@@ -331,6 +425,7 @@ impl AppState {
         connection_id: Option<&str>,
         publisher: &P,
     ) -> Result<Account, String> {
+        self.ensure_settings_writable()?;
         let _publish_guard = self.publish_lock.lock().await;
         let previous = self.snapshot.read().await.clone();
         if let Some(connection_id) = connection_id {
@@ -360,6 +455,7 @@ impl AppState {
             label: credential.display_name.clone(),
             mode: AccountMode::Isolated,
             profile: Some(format!("{}|{}", credential.uuid, credential.account_id)),
+            cli_username: None,
         };
         account.validate()?;
         let mut settings = previous.settings.clone();
@@ -387,6 +483,7 @@ impl AppState {
         connection_id: &str,
         publisher: &P,
     ) -> Result<Settings, String> {
+        self.ensure_settings_writable()?;
         if matches!(connection_id, LOCAL_GITHUB_ID | LOCAL_VERCEL_ID) {
             return Err("The default local CLI accounts cannot be removed.".into());
         }
@@ -437,40 +534,38 @@ impl AppState {
         self.login_statuses.lock().await.remove(connection_id);
         Ok(saved)
     }
+}
 
-    pub async fn publish_login_status_if_account_exists(
-        &self,
-        connection_id: &str,
-        provider: Provider,
-        status: LoginStatus,
-    ) -> bool {
-        let _publish_guard = self.publish_lock.lock().await;
-        let exists = self
-            .snapshot
-            .read()
-            .await
-            .settings
-            .accounts
-            .iter()
-            .any(|account| account.id == connection_id && account.provider == provider);
-        if exists {
-            self.login_statuses
-                .lock()
-                .await
-                .insert(connection_id.to_owned(), status);
-        }
-        exists
+async fn load_initial_snapshot(store: &SettingsStore) -> Snapshot {
+    let settings = store.load().await.unwrap_or_default();
+    Snapshot {
+        settings_error: store.load_error(),
+        ..Snapshot::initial(settings)
     }
 }
 
 fn apply_settings_change(
     mut settings: Settings,
     change: SettingsChange,
+    activities: &[Activity],
 ) -> Result<Settings, String> {
     use crate::preferences::{NotificationRule, NotificationScope};
 
     match change {
         SettingsChange::Scope { value } => settings.scope = value,
+        SettingsChange::DisplayProviderScope { provider, scope } => {
+            settings.display_scopes.providers.remove(&provider);
+            if let Some(scope) = scope {
+                settings.display_scopes.providers.insert(provider, scope);
+            }
+        }
+        SettingsChange::DisplayTargetScope { target_key, scope } => {
+            require_target_key(&settings, &target_key)?;
+            settings.display_scopes.targets.remove(&target_key);
+            if let Some(scope) = scope {
+                settings.display_scopes.targets.insert(target_key, scope);
+            }
+        }
         SettingsChange::HistoryHours { value } => settings.history_hours = value,
         SettingsChange::Language { value } => settings.preferences.language = value,
         SettingsChange::AutomaticUpdates { value } => {
@@ -606,6 +701,28 @@ fn apply_settings_change(
                     .insert(connection_id, alias.to_owned());
             }
         }
+        SettingsChange::ActivityVisibility { activity, hidden } => {
+            activity.validate()?;
+            let position = settings
+                .hidden_activities
+                .iter()
+                .position(|item| item == &activity);
+            if hidden {
+                if !activities.iter().any(|item| activity.matches(item)) {
+                    return Err("The selected activity does not exist.".into());
+                }
+                if position.is_none() {
+                    if settings.hidden_activities.len() >= MAX_HIDDEN_ACTIVITIES {
+                        return Err(format!(
+                            "At most {MAX_HIDDEN_ACTIVITIES} activities can be hidden."
+                        ));
+                    }
+                    settings.hidden_activities.push(activity);
+                }
+            } else if let Some(position) = position {
+                settings.hidden_activities.remove(position);
+            }
+        }
     }
     settings.prune_target_references();
     settings.validate()?;
@@ -619,6 +736,53 @@ fn require_target_key(settings: &Settings, target_key: &str) -> Result<(), Strin
         .any(|target| target.key() == target_key)
         .then_some(())
         .ok_or_else(|| "The selected target does not exist.".to_owned())
+}
+
+fn add_default_rules_for_new_targets(settings: &mut Settings, previous: &Settings) {
+    use crate::preferences::{NotificationRule, NotificationScope};
+
+    let previous_keys: HashSet<_> = previous.targets.iter().map(Target::key).collect();
+    let existing_rules: HashSet<_> = settings
+        .preferences
+        .notifications
+        .rules
+        .iter()
+        .map(|rule| rule.target_key.clone())
+        .collect();
+    let new_rules = settings
+        .targets
+        .iter()
+        .map(Target::key)
+        .filter(|key| !previous_keys.contains(key) && !existing_rules.contains(key))
+        .map(|target_key| NotificationRule {
+            target_key,
+            enabled: true,
+            scope: NotificationScope::Mine,
+            statuses: vec![
+                ActivityStatus::Success,
+                ActivityStatus::Failed,
+                ActivityStatus::Canceled,
+            ],
+        })
+        .collect::<Vec<_>>();
+    settings.preferences.notifications.rules.extend(new_rules);
+}
+
+fn validate_new_hidden_activities(previous: &Snapshot, next: &Settings) -> Result<(), String> {
+    for hidden in next
+        .hidden_activities
+        .iter()
+        .filter(|hidden| !previous.settings.hidden_activities.contains(hidden))
+    {
+        if !previous
+            .activities
+            .iter()
+            .any(|activity| hidden.matches(activity))
+        {
+            return Err("The selected activity does not exist.".into());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -716,7 +880,7 @@ pub fn start_polling(app: AppHandle) {
         loop {
             let state = app.state::<AppState>();
             let snapshot = state.refresh(&app).await;
-            tokio::time::sleep(poll_interval(&snapshot)).await;
+            state.refresh_wake.wait(poll_interval(&snapshot)).await;
         }
     });
 }
@@ -744,6 +908,13 @@ fn poll_interval(snapshot: &Snapshot) -> Duration {
     }
 }
 
+fn with_poll_interval(snapshot: Snapshot) -> Snapshot {
+    Snapshot {
+        poll_interval_seconds: poll_interval(&snapshot).as_secs(),
+        ..snapshot
+    }
+}
+
 fn update_tray<R: Runtime>(app: &AppHandle<R>, snapshot: &Snapshot) {
     let active = active_tray_count(snapshot);
     if let Some(tray) = app.tray_by_id(crate::TRAY_ID) {
@@ -759,29 +930,43 @@ fn update_tray<R: Runtime>(app: &AppHandle<R>, snapshot: &Snapshot) {
 }
 
 fn active_tray_count(snapshot: &Snapshot) -> usize {
-    let mut runs = HashMap::<(Provider, &str), (&Activity, bool)>::new();
+    let mut runs = HashMap::<(Provider, &str, &str), (&Activity, bool)>::new();
     if !snapshot.settings.panel.show_active {
         return 0;
     }
     let now = Utc::now();
     for activity in snapshot.activities.iter().filter(|activity| {
-        snapshot
+        !snapshot
             .settings
-            .panel
-            .includes(activity, &snapshot.settings)
+            .hidden_activities
+            .iter()
+            .any(|hidden| hidden.matches(activity))
+            && snapshot
+                .settings
+                .panel
+                .includes(activity, &snapshot.settings)
     }) {
-        let key = (activity.provider, activity.id.as_str());
-        let any_mine =
-            activity.ownership == Ownership::Mine || runs.get(&key).is_some_and(|(_, mine)| *mine);
+        let key = (
+            activity.provider,
+            activity.target_id.as_str(),
+            activity.id.as_str(),
+        );
+        let eligible = snapshot.settings.effective_display_scope(
+            activity.provider,
+            Some(&activity.connection_id),
+            Some(&activity.target_id),
+        ) == Scope::All
+            || activity.ownership == Ownership::Mine;
+        let eligible_seen = eligible || runs.get(&key).is_some_and(|(_, seen)| *seen);
         let latest = runs
             .get(&key)
             .map(|(current, _)| newer_observation(current, activity))
             .unwrap_or(activity);
-        runs.insert(key, (latest, any_mine));
+        runs.insert(key, (latest, eligible_seen));
     }
     runs.values()
-        .filter(|(activity, any_mine)| {
-            (snapshot.settings.scope == Scope::All || *any_mine)
+        .filter(|(activity, eligible)| {
+            *eligible
                 && is_active_status(activity.status)
                 && crate::panel::visible_activity(activity, now)
         })
@@ -819,5 +1004,8 @@ fn is_active_status(status: ActivityStatus) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod settings_recovery_tests;
 
 mod refresh;

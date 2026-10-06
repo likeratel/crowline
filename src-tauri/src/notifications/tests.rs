@@ -187,6 +187,97 @@ fn changing_rules_rebaselines_without_backlog() {
 }
 
 #[test]
+fn adding_an_unrelated_target_rule_preserves_active_transition_tracking() {
+    let selected = target();
+    let mut engine = NotificationEngine::default();
+    let initial = preferences(NotificationScope::All);
+    let running = activity("in-flight", ActivityStatus::Running, Ownership::Mine);
+    assert!(observe(
+        &mut engine,
+        &selected,
+        std::slice::from_ref(&running),
+        &initial,
+        1,
+    )
+    .is_empty());
+
+    let added = Target {
+        id: "org/new-app".into(),
+        name: "new-app".into(),
+        ..selected.clone()
+    };
+    let mut changed = initial.clone();
+    changed.notifications.rules.push(NotificationRule {
+        target_key: added.key(),
+        scope: NotificationScope::Mine,
+        statuses: vec![
+            ActivityStatus::Success,
+            ActivityStatus::Failed,
+            ActivityStatus::Canceled,
+        ],
+        enabled: true,
+    });
+    engine.sync_preferences(&changed.notifications);
+
+    let failed = Activity {
+        status: ActivityStatus::Failed,
+        updated_at: "2026-09-30T00:03:00Z".into(),
+        ..running
+    };
+    assert_eq!(
+        observe(&mut engine, &selected, &[failed], &changed, 2).len(),
+        1
+    );
+}
+
+#[test]
+fn adding_an_unrelated_target_rule_preserves_pending_delivery_retry() {
+    let selected = target();
+    let mut engine = NotificationEngine::default();
+    let initial = preferences(NotificationScope::All);
+    let running = activity("pending", ActivityStatus::Running, Ownership::Mine);
+    observe(
+        &mut engine,
+        &selected,
+        std::slice::from_ref(&running),
+        &initial,
+        1,
+    );
+    let failed = Activity {
+        status: ActivityStatus::Failed,
+        updated_at: "2026-09-30T00:03:00Z".into(),
+        ..running
+    };
+    let pending = observe(
+        &mut engine,
+        &selected,
+        std::slice::from_ref(&failed),
+        &initial,
+        2,
+    );
+    assert_eq!(pending.len(), 1);
+    engine.mark_failed(&pending[0], 2);
+
+    let added = Target {
+        id: "org/new-app".into(),
+        name: "new-app".into(),
+        ..selected.clone()
+    };
+    let mut changed = initial.clone();
+    changed.notifications.rules.push(NotificationRule {
+        target_key: added.key(),
+        scope: NotificationScope::Mine,
+        statuses: vec![ActivityStatus::Failed],
+        enabled: true,
+    });
+    engine.sync_preferences(&changed.notifications);
+
+    let retried = observe(&mut engine, &selected, &[failed], &changed, 3);
+    assert_eq!(retried.len(), 1);
+    assert_eq!(retried[0].notification, pending[0].notification);
+}
+
+#[test]
 fn bookkeeping_is_bounded() {
     let selected = target();
     let prefs = preferences(NotificationScope::All);
@@ -622,7 +713,7 @@ fn notification_includes_service_execution_and_actor_context() {
         ..activity("run", ActivityStatus::Success, Ownership::Mine)
     };
     let notification = localize(&run, Language::Korean);
-    assert_eq!(notification.title, "Vercel · 배포 성공");
+    assert_eq!(notification.title, "Vercel · 실행 성공");
     assert_eq!(
         notification.body,
         "orbit-web · Ship checkout\nOrbit · main · alex"
@@ -639,7 +730,7 @@ fn notification_omits_duplicate_and_missing_execution_names() {
             ..activity("run", ActivityStatus::Failed, Ownership::Unknown)
         };
         let notification = localize(&run, Language::English);
-        assert_eq!(notification.title, "GitHub Actions · Deployment failed");
+        assert_eq!(notification.title, "GitHub Actions · Run failed");
         assert_eq!(
             notification.body,
             "Deploy production\nExample App · Unknown actor"
@@ -653,25 +744,25 @@ fn notification_unknown_actor_follows_language_and_outcome() {
         (
             Language::Korean,
             ActivityStatus::Success,
-            "배포 성공",
+            "실행 성공",
             "실행자 미확인",
         ),
         (
             Language::English,
             ActivityStatus::Failed,
-            "Deployment failed",
+            "Run failed",
             "Unknown actor",
         ),
         (
             Language::Japanese,
             ActivityStatus::Canceled,
-            "デプロイ中止",
+            "実行キャンセル",
             "実行者不明",
         ),
         (
             Language::SimplifiedChinese,
             ActivityStatus::Success,
-            "部署成功",
+            "运行成功",
             "执行者未知",
         ),
     ] {

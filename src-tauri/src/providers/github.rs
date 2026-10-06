@@ -21,6 +21,7 @@ const ACTIVE_STATUSES: [&str; 5] = ["queued", "in_progress", "waiting", "pending
 
 #[derive(Deserialize)]
 struct User {
+    id: u64,
     login: String,
 }
 
@@ -82,7 +83,8 @@ pub async fn discover(cli: Option<&CliInvocation>, connection_id: &str) -> Disco
             issues: Vec::new(),
         };
     };
-    let (repositories, truncated) = match discover_repositories(cli).await {
+    let api = super::api::ApiClient::github(cli);
+    let (repositories, truncated) = match discover_repositories(&api).await {
         Ok(result) => result,
         Err(error) => return failed_discovery(error, connection.cli_version, connection_id),
     };
@@ -115,15 +117,11 @@ pub async fn discover(cli: Option<&CliInvocation>, connection_id: &str) -> Disco
 
 pub async fn connection(cli: Option<&CliInvocation>, connection_id: &str) -> Connection {
     let Some(cli) = cli else {
-        return Connection::disconnected(
-            connection_id,
-            Provider::Github,
-            ConnectionStatus::MissingCli,
-            "GitHub CLI 2.65 or newer was not found.",
-        );
+        return failed_discovery(CliError::Unavailable, None, connection_id).connection;
     };
     let version = cli.version().await;
-    match github_json::<User>(cli, "user").await {
+    let api = super::api::ApiClient::github(cli);
+    match verified_user(&api).await {
         Ok(user) => Connection {
             connection_id: connection_id.into(),
             provider: Provider::Github,
@@ -136,7 +134,34 @@ pub async fn connection(cli: Option<&CliInvocation>, connection_id: &str) -> Con
     }
 }
 
-async fn discover_repositories(cli: &CliInvocation) -> Result<(Vec<Repository>, bool), CliError> {
+pub(crate) async fn github_cli_identity(cli: &CliInvocation) -> Result<(String, String), CliError> {
+    let user: User = github_json(&super::api::ApiClient::github(cli), "user").await?;
+    Ok((user.id.to_string(), user.login))
+}
+
+fn identity_matches(api: &super::api::ApiClient, actual: u64) -> bool {
+    api.expected_identity()
+        .is_none_or(|expected| expected == actual.to_string())
+}
+
+async fn verified_user(api: &super::api::ApiClient) -> Result<User, CliError> {
+    let user: User = github_json(api, "user").await?;
+    if identity_matches(api, user.id) {
+        Ok(user)
+    } else {
+        Err(CliError::AccountMismatch)
+    }
+}
+
+pub(super) async fn verify_cli_identity(cli: &CliInvocation) -> Result<(), CliError> {
+    verified_user(&super::api::ApiClient::github(cli))
+        .await
+        .map(|_| ())
+}
+
+async fn discover_repositories(
+    cli: &super::api::ApiClient,
+) -> Result<(Vec<Repository>, bool), CliError> {
     let mut repositories = Vec::new();
     let mut full_last_page = false;
     for page in 1..=MAX_REPOSITORY_PAGES {
@@ -195,10 +220,12 @@ pub async fn page(
     cursor: Option<&str>,
     identity: Option<&str>,
 ) -> Result<ActivityPage, CliError> {
+    let cli = super::api::ApiClient::github(cli);
+    verified_user(&cli).await?;
     validate_github_target(target)?;
     let page_number = parse_page_cursor(cursor)?;
     let endpoint = runs_endpoint(&target.id, None, RECENT_PAGE_SIZE, page_number);
-    let response: RunsResponse = github_json(cli, &endpoint).await?;
+    let response: RunsResponse = github_json(&cli, &endpoint).await?;
     let next_cursor = next_page_cursor(
         page_number,
         RECENT_PAGE_SIZE,
@@ -222,11 +249,13 @@ pub async fn active(
     target: &Target,
     identity: Option<&str>,
 ) -> Result<ActivityPage, CliError> {
+    let cli = super::api::ApiClient::github(cli);
+    verified_user(&cli).await?;
     validate_github_target(target)?;
     let results = join_all(
         ACTIVE_STATUSES
             .iter()
-            .map(|status| fetch_active_status(cli, &target.id, status)),
+            .map(|status| fetch_active_status(&cli, &target.id, status)),
     )
     .await;
     let mut runs = Vec::new();
@@ -267,7 +296,7 @@ pub async fn active(
 }
 
 async fn fetch_active_status(
-    cli: &CliInvocation,
+    cli: &super::api::ApiClient,
     repository: &str,
     status: &str,
 ) -> (Vec<WorkflowRun>, bool, Option<CliError>) {
@@ -375,18 +404,29 @@ pub async fn collect(
             vec![Issue {
                 provider: Provider::Github,
                 connection_id: Some(connection_id.into()),
-                message:
-                    "GitHub CLI was not found. Cached GitHub activity is shown when available."
-                        .into(),
+                message: "GitHub CLI is unavailable. Cached activity is shown when available."
+                    .into(),
                 target_id: None,
             }],
         );
     };
+    let cli = super::api::ApiClient::github(cli);
+    if let Err(error) = verified_user(&cli).await {
+        return (
+            Vec::new(),
+            vec![Issue {
+                provider: Provider::Github,
+                connection_id: Some(connection_id.into()),
+                message: error.user_message("GitHub"),
+                target_id: None,
+            }],
+        );
+    }
     let cutoff = Utc::now() - Duration::hours(i64::from(history_hours));
     let mut activities = Vec::new();
     let mut issues = Vec::new();
     for target in targets {
-        match collect_repository(cli, target, cutoff, account).await {
+        match collect_repository(&cli, target, cutoff, account).await {
             Ok((mut target_activities, truncated)) => {
                 activities.append(&mut target_activities);
                 if truncated {
@@ -413,7 +453,7 @@ pub async fn collect(
 }
 
 async fn collect_repository(
-    cli: &CliInvocation,
+    cli: &super::api::ApiClient,
     target: &Target,
     cutoff: DateTime<Utc>,
     account: Option<&str>,
@@ -439,7 +479,7 @@ async fn collect_repository(
 }
 
 async fn fetch_runs(
-    cli: &CliInvocation,
+    cli: &super::api::ApiClient,
     repository: &str,
     status: &str,
     max_pages: u32,
@@ -459,18 +499,10 @@ async fn fetch_runs(
 }
 
 async fn github_json<T: for<'de> Deserialize<'de>>(
-    cli: &CliInvocation,
+    cli: &super::api::ApiClient,
     endpoint: &str,
 ) -> Result<T, CliError> {
-    cli.json(&[
-        "api",
-        "--hostname",
-        "github.com",
-        "--method",
-        "GET",
-        endpoint,
-    ])
-    .await
+    cli.github_get(endpoint).await
 }
 
 fn map_run(run: WorkflowRun, target: &Target, account: Option<&str>) -> Result<Activity, CliError> {

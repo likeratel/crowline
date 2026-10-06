@@ -162,17 +162,21 @@ pub(crate) fn build_tray(app: &App, language: Language) -> tauri::Result<()> {
         .icon_as_template(true)
         .show_menu_on_left_click(false)
         .on_menu_event(handle_menu_event)
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
+        .on_tray_icon_event(|tray, event| match event {
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Down,
+                ..
+            } => windows::begin_tray_panel_click(tray.app_handle()),
+            TrayIconEvent::Click {
                 position,
                 rect,
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
                 ..
-            } = event
-            {
-                windows::toggle_panel(tray.app_handle(), rect, position);
-            }
+            } => windows::finish_tray_panel_click(tray.app_handle(), rect, position),
+            TrayIconEvent::Leave { .. } => windows::cancel_tray_panel_click(tray.app_handle()),
+            _ => {}
         });
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());

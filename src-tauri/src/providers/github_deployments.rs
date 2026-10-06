@@ -86,27 +86,34 @@ fn endpoint(repository: &str, cursor: Option<&str>) -> Result<(String, u32), Cli
     ))
 }
 
-async fn get<T: for<'de> Deserialize<'de>>(cli: &CliInvocation, path: &str) -> Result<T, CliError> {
-    cli.json(&["api", "--hostname", "github.com", "--method", "GET", path])
-        .await
+async fn get<T: for<'de> Deserialize<'de>>(
+    cli: &super::api::ApiClient,
+    path: &str,
+) -> Result<T, CliError> {
+    cli.github_get(path).await
 }
 
 pub async fn page(
-    cli: &CliInvocation,
+    invocation: &CliInvocation,
     target: &Target,
     cursor: Option<&str>,
     identity: Option<&str>,
 ) -> Result<ActivityPage, CliError> {
+    super::github::verify_cli_identity(invocation).await?;
+    let cli = super::api::ApiClient::github(invocation);
     let (path, number) = endpoint(&target.id, cursor)?;
-    let records: Vec<Deployment> = get(cli, &path).await?;
+    let records: Vec<Deployment> = get(&cli, &path).await?;
     let more = records.len() == PAGE_SIZE;
-    let observations = stream::iter(records.into_iter().map(|record| async move {
-        let path = format!(
-            "repos/{}/deployments/{}/statuses?per_page=1",
-            target.id, record.id
-        );
-        let statuses = get::<Vec<Status>>(cli, &path).await;
-        (record, statuses)
+    let observations = stream::iter(records.into_iter().map(|record| {
+        let api = cli.clone();
+        async move {
+            let path = format!(
+                "repos/{}/deployments/{}/statuses?per_page=1",
+                target.id, record.id
+            );
+            let statuses = get::<Vec<Status>>(&api, &path).await;
+            (record, statuses)
+        }
     }))
     .buffer_unordered(3)
     .collect::<Vec<_>>()

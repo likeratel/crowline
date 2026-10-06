@@ -1,16 +1,35 @@
 import { z } from "zod";
 import {
   languageSchema,
+  activityKeySchema,
+  activityKeyString,
+  displayScopeSchema,
   providerSchema,
   targetSchema,
   notificationRuleSchema,
   targetKey,
+  type NotificationRule,
   type Settings,
 } from "./domain";
 
 const key = z.string().min(1).max(1600);
 export const settingsChangeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("activityVisibility"),
+    activity: activityKeySchema,
+    hidden: z.boolean(),
+  }),
   z.object({ kind: z.literal("scope"), value: z.enum(["mine", "all"]) }),
+  z.object({
+    kind: z.literal("displayProviderScope"),
+    provider: providerSchema,
+    scope: displayScopeSchema.nullable(),
+  }),
+  z.object({
+    kind: z.literal("displayTargetScope"),
+    targetKey: key,
+    scope: displayScopeSchema.nullable(),
+  }),
   z.object({
     kind: z.literal("historyHours"),
     value: z.union([z.literal(24), z.literal(168)]),
@@ -63,10 +82,16 @@ export type SettingsChange = z.infer<typeof settingsChangeSchema>;
 
 export function settingsChangeKey(change: SettingsChange): string {
   switch (change.kind) {
+    case "activityVisibility":
+      return `activityVisibility:${activityKeyString(change.activity)}`;
     case "panel":
       return `panel:${Object.keys(change.patch).sort().join("|")}`;
     case "panelProvider":
       return `panelProvider:${change.provider}`;
+    case "displayProviderScope":
+      return `displayProviderScope:${change.provider}`;
+    case "displayTargetScope":
+      return `displayTargetScope:${change.targetKey}`;
     case "panelTarget":
       return `panelTarget:${change.targetKey}`;
     case "notificationRules":
@@ -102,8 +127,54 @@ export function applySettingsChange(
   const preferences = settings.preferences;
   const panel = settings.panel;
   switch (change.kind) {
+    case "activityVisibility": {
+      const key = activityKeyString(change.activity);
+      const retained = settings.hiddenActivities.filter(
+        (item) => activityKeyString(item) !== key,
+      );
+      return {
+        ...settings,
+        hiddenActivities: change.hidden
+          ? [...retained, change.activity]
+          : retained,
+      };
+    }
     case "scope":
       return { ...settings, scope: change.value };
+    case "displayProviderScope": {
+      const providers = Object.fromEntries(
+        Object.entries(settings.displayScopes.providers).filter(
+          ([provider]) => provider !== change.provider,
+        ),
+      );
+      return {
+        ...settings,
+        displayScopes: {
+          ...settings.displayScopes,
+          providers:
+            change.scope === null
+              ? providers
+              : { ...providers, [change.provider]: change.scope },
+        },
+      };
+    }
+    case "displayTargetScope": {
+      const targets = Object.fromEntries(
+        Object.entries(settings.displayScopes.targets).filter(
+          ([targetKey]) => targetKey !== change.targetKey,
+        ),
+      );
+      return {
+        ...settings,
+        displayScopes: {
+          ...settings.displayScopes,
+          targets:
+            change.scope === null
+              ? targets
+              : { ...targets, [change.targetKey]: change.scope },
+        },
+      };
+    }
     case "historyHours":
       return { ...settings, historyHours: change.value };
     case "language":
@@ -203,6 +274,9 @@ export function applySettingsChange(
     }
     case "target": {
       const key = targetKey(change.target);
+      const wasSelected = settings.targets.some(
+        (target) => targetKey(target) === key,
+      );
       const targets = change.selected
         ? [
             ...settings.targets.filter((target) => targetKey(target) !== key),
@@ -210,6 +284,9 @@ export function applySettingsChange(
           ]
         : settings.targets.filter((target) => targetKey(target) !== key);
       const keys = new Set(targets.map(targetKey));
+      const rules = preferences.notifications.rules.filter((rule) =>
+        keys.has(rule.targetKey),
+      );
       return {
         ...settings,
         targets,
@@ -218,19 +295,31 @@ export function applySettingsChange(
           hiddenTargets: panel.hiddenTargets.filter((key) => keys.has(key)),
           pinnedTargets: panel.pinnedTargets.filter((key) => keys.has(key)),
         },
+        displayScopes: {
+          ...settings.displayScopes,
+          targets: Object.fromEntries(
+            Object.entries(settings.displayScopes.targets).filter(([key]) =>
+              keys.has(key),
+            ),
+          ),
+        },
         preferences: {
           ...preferences,
           notifications: {
             ...preferences.notifications,
-            rules: preferences.notifications.rules.filter((rule) =>
-              keys.has(rule.targetKey),
-            ),
+            rules:
+              change.selected &&
+              !wasSelected &&
+              !rules.some((rule) => rule.targetKey === key)
+                ? [...rules, defaultNotificationRule(key)]
+                : rules,
           },
         },
       };
     }
     case "targets": {
       const changedKeys = new Set(change.targets.map(targetKey));
+      const previousKeys = new Set(settings.targets.map(targetKey));
       const retained = settings.targets.filter(
         (target) => !changedKeys.has(targetKey(target)),
       );
@@ -246,6 +335,15 @@ export function applySettingsChange(
           ]
         : retained;
       const keys = new Set(targets.map(targetKey));
+      const rules = preferences.notifications.rules.filter((rule) =>
+        keys.has(rule.targetKey),
+      );
+      const ruleKeys = new Set(rules.map((rule) => rule.targetKey));
+      const newRules = change.selected
+        ? [...changedKeys]
+            .filter((key) => !previousKeys.has(key) && !ruleKeys.has(key))
+            .map(defaultNotificationRule)
+        : [];
       return {
         ...settings,
         targets,
@@ -254,16 +352,31 @@ export function applySettingsChange(
           hiddenTargets: panel.hiddenTargets.filter((key) => keys.has(key)),
           pinnedTargets: panel.pinnedTargets.filter((key) => keys.has(key)),
         },
+        displayScopes: {
+          ...settings.displayScopes,
+          targets: Object.fromEntries(
+            Object.entries(settings.displayScopes.targets).filter(([key]) =>
+              keys.has(key),
+            ),
+          ),
+        },
         preferences: {
           ...preferences,
           notifications: {
             ...preferences.notifications,
-            rules: preferences.notifications.rules.filter((rule) =>
-              keys.has(rule.targetKey),
-            ),
+            rules: [...rules, ...newRules],
           },
         },
       };
     }
   }
+}
+
+function defaultNotificationRule(targetKey: string): NotificationRule {
+  return {
+    targetKey,
+    enabled: true,
+    scope: "mine" as const,
+    statuses: ["success", "failed", "canceled"],
+  };
 }

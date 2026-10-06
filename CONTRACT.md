@@ -2,7 +2,7 @@
 
 JSON 필드와 enum은 camelCase/아래 문자열을 사용한다. frontend 모델은 Zod로 확인한다.
 
-Provider = github | vercel | aws
+Provider = `src/domain.ts::PROVIDERS` 및 `src-tauri/src/models.rs::Provider` 참조 (GitHub, Vercel, AWS, Bitbucket, 로컬 CLI 및 안내 전용 서비스).
 ActivityStatus = queued | running | waiting | success | failed | canceled | skipped | unknown
 Ownership = mine | other | unknown
 
@@ -12,14 +12,17 @@ Settings { scope: mine|all, historyHours: 24|168, targets: Target[], accounts: A
 Connection { connectionId, provider, status: connected|signed-out|missing-cli|error|unconfigured, account?: string|null, message?: string|null, cliVersion?: string|null }
 Activity { id, targetId, connectionId, provider, kind, title, project, branch?: string|null, url, status, rawStatus, actor?: string|null, ownership, startedAt, finishedAt?: string|null, updatedAt }
 Issue { connectionId?: string|null, provider, message, targetId?: string|null }
-Snapshot { settings, connections: Connection[], activities: Activity[], issues: Issue[], refreshing: boolean, lastUpdatedAt?: string|null }
+QueryHealth { provider, connectionId, targetId, status: checking|success|partial|error, lastAttemptAt, lastSuccessfulAt?: string|null }
+Snapshot { settings, settingsError?: string|null, connections: Connection[], activities: Activity[], issues: Issue[], refreshing: boolean, pollIntervalSeconds: positive integer (default 120), queryHealth: QueryHealth[], lastUpdatedAt?: string|null }
 Discovery { connection: Connection, targets: Target[], awsProfiles: string[], issues: Issue[] }
 LoginStatus { connectionId, provider, state: waiting|complete|error, message, url?: string|null, code?: string|null }
 
 Commands:
+
 - get_snapshot() -> Snapshot
 - save_settings({settings}) -> Settings
 - refresh() -> Snapshot
+- request_refresh() -> void
 - discover({provider, connectionId: string|null, profile: string|null, region: string|null}) -> Discovery
 - create_connection({provider, label, profile: string|null}) -> Account
 - remove_connection({connectionId}) -> Settings
@@ -29,12 +32,36 @@ Commands:
 - hide_panel() -> void
 - open_dashboard() -> void
 
-Default slots reuse `github:local` and `vercel:local` CLI sessions. Added GitHub/Vercel slots use isolated official CLI configuration directories, never switch the global CLI account. AWS slots bind to one local profile. Target identity is `(provider, connectionId, id)`. Cache and login status are account-scoped. Accounts are created/removed only through their commands; settings save must not retarget authentication definitions. Removing a connection removes its monitoring selections and in-memory data; it does not delete external or retained app-managed CLI authentication files.
+Legacy slots `github:local` and `vercel:local` retain their IDs and monitored targets. GitHub Actions and Deployments use installed GitHub CLI; Account.cliUsername optionally selects a signed-in user while profile preserves the verified stable provider identity. Extra unbound connections require explicit CLI account selection. Vercel uses installed CLI with a per-connection configuration directory for additional accounts. Existing settings, aliases and notification rules are retained. AWS slots bind to one local profile. Bitbucket retains OS-vault API credentials. Target identity is `(provider, connectionId, id)`.
+
+Settings.hiddenActivities stores structured `{provider,targetId,activityId}` keys (default empty; max 10,000). `change_settings({change:{kind:"activityVisibility",activity:{provider,targetId,activityId},hidden:boolean}})` persists hide/undo without deleting remote data, cached activities, or pagination. The frontend filters all execution lists; backend tray counts and notifications also respect hidden keys. Hide validates that the row exists in the current snapshot; undo may remove a persisted key after the row leaves cache.
 
 `discover` without a connectionId is allowed only for local AWS profile-name discovery and performs no remote request. Its connection uses unconfigured sentinel `aws:local`. Legacy saved settings migrate provider defaults and split AWS targets by profile.
 
 Events: snapshot-updated carries Snapshot. Backend polls even with window hidden. Keep IPC commands fixed and validate every setting/target.
+`QueryHealth` identifies one monitored target by `(provider, connectionId, targetId)`. `lastAttemptAt` records the current polling attempt; `lastSuccessfulAt` changes only after the current monitored query completes successfully. `success` means the current required scans completed, `partial` means at least one required scan did not complete, and `error` means the target query failed. History pagination does not alter this current-query state. A missing health row remains compatible with older snapshots and is treated by the client as unconfirmed.
+
+`pollIntervalSeconds` is the backend's current poll cadence for this snapshot; clients use it to judge freshness per target. `lastUpdatedAt` remains an aggregate compatibility field and is not a substitute for target health or an activity's provider-supplied `updatedAt` timestamp.
+
+`request_refresh` only signals the polling loop. It does not return a snapshot or force a concurrent provider query; repeated signals are coalesced, and a signal received during a running cycle is retained only when a follow-up is needed.
+`settingsError` is an app-level persistent recovery error, not a provider issue. A startup read/parse/validation failure locks settings and account/auth mutations for the session to preserve the original file. If only migration persistence fails, the readable settings remain available. Repair the file/permissions and restart before saving. UI suppresses first-use onboarding and shows the lock in every view while permitting read-only monitoring. An initial event subscription failure must be retried before a refresh is treated as recovered.
 Dates: RFC3339 UTC strings. Unknown ownership stays unknown; mine filter must not include it.
 AWS adapter contract: providers::aws::{discover(profile: Option<String>, region: Option<String>) -> Result<Discovery,String>, collect(targets: &[Target], history_hours: u32) -> (Vec<Activity>,Vec<Issue>)} async. Backend may adapt signatures with explicit coordination.
 
-Bundled tools at Tauri resource directory `tools/`: `gh` (or gh.exe), `gh-isolated` (or gh-isolated.exe), `node` (or node.exe), `vercel/node_modules/vercel/dist/index.js`. Prefer supported system CLI for local GitHub and Vercel slots; fallback to bundled tools. Isolated GitHub requires the patched bundled helper and private GH_CONFIG_DIR, with CROWLINE_GH_KEYRING_NAMESPACE set to the validated account ID. The helper uses `gh:io.crowline.desktop:<accountId>:<hostname>` keyring services; local GitHub removes inherited namespace overrides. Missing isolated helper fails closed. No global installation or credential copying.
+No CLI or Node runtime is bundled. Auxiliary adapters use installed official CLIs, discovered through bounded executable paths and version probes. Missing installation, unsupported CLI commands/output, and expired login are surfaced separately; no shell command strings or automatic installers are used.
+
+Authentication commands:
+
+- get_github_cli_accounts() -> string[] (public usernames only)
+- connect_github_cli_account({provider,connectionId,username}) -> Account
+- begin_login({provider,connectionId,profile}) -> LoginStatus (Vercel CLI / AWS SSO)
+- get_login_status({provider,connectionId}) -> LoginStatus
+- connect_bitbucket({email,token,connectionId}) -> Account
+
+GitHub and Vercel do not require a Crowline OAuth client ID or API-token form. Read requests use installed CLI commands; GitHub per-user tokens remain ephemeral in the backend subprocess environment. No token is returned over IPC. Bitbucket is the explicit token-authentication exception. See docs/authentication.md for setup and migration details.
+
+## Display scope and new project defaults
+
+`settings.displayScopes` defaults to `{ providers: {}, targets: {} }`. Values are `mine` or `all`; target keys include provider, connection ID and external target ID. `displayTargetScope` and `displayProviderScope` accept `scope: null` to inherit. Resolution is project > service > legacy `settings.scope`. Dashboard, history, panel and native tray counts share eligibility; duplicate execution observations preserve newest state and a matching account identity. Removed projects prune their overrides. Display filters never change notification scope.
+
+Selecting a new monitored project creates an enabled notification rule with `mine` and success/failed/canceled outcomes. Existing explicit rules and the master notification setting remain unchanged. New targets baseline without replaying history; other targets retain observed runs, delivered deduplication and pending retries. Account aliases are saved explicitly with confirmation; input blur does not persist them.

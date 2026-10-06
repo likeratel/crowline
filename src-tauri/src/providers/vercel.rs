@@ -112,7 +112,8 @@ pub async fn discover(cli: Option<&CliInvocation>, connection_id: &str) -> Disco
             issues: Vec::new(),
         };
     };
-    let (teams, teams_truncated) = match discover_teams(cli).await {
+    let api = super::api::ApiClient::vercel(cli);
+    let (teams, teams_truncated) = match discover_teams(&api).await {
         Ok(teams) => teams,
         Err(error) => return failed_discovery(error, connection.cli_version, connection_id),
     };
@@ -132,7 +133,7 @@ pub async fn discover(cli: Option<&CliInvocation>, connection_id: &str) -> Disco
         });
     }
     for (scope_id, scope_slug) in contexts {
-        match discover_projects(cli, scope_id.as_deref(), &scope_slug).await {
+        match discover_projects(&api, scope_id.as_deref(), &scope_slug).await {
             Ok((projects, truncated)) => {
                 targets.extend(
                     projects
@@ -168,16 +169,12 @@ pub async fn discover(cli: Option<&CliInvocation>, connection_id: &str) -> Disco
 
 pub async fn connection(cli: Option<&CliInvocation>, connection_id: &str) -> Connection {
     let Some(cli) = cli else {
-        return Connection::disconnected(
-            connection_id,
-            Provider::Vercel,
-            ConnectionStatus::MissingCli,
-            "Vercel CLI 50.29 or newer was not found.",
-        );
+        return failed_discovery(CliError::Unavailable, None, connection_id).connection;
     };
     let version = cli.version().await;
-    match current_user(cli).await {
-        Ok(user) => Connection {
+    let api = super::api::ApiClient::vercel(cli);
+    match current_user(&api).await {
+        Ok(user) if identity_matches(&api, &user.id) => Connection {
             connection_id: connection_id.into(),
             provider: Provider::Vercel,
             status: ConnectionStatus::Connected,
@@ -185,11 +182,17 @@ pub async fn connection(cli: Option<&CliInvocation>, connection_id: &str) -> Con
             message: None,
             cli_version: version,
         },
+        Ok(_) => failed_discovery(CliError::AccountMismatch, version, connection_id).connection,
         Err(error) => failed_discovery(error, version, connection_id).connection,
     }
 }
 
-async fn discover_teams(cli: &CliInvocation) -> Result<(Vec<Team>, bool), CliError> {
+fn identity_matches(api: &super::api::ApiClient, actual: &str) -> bool {
+    api.expected_identity()
+        .is_none_or(|expected| expected == actual)
+}
+
+async fn discover_teams(cli: &super::api::ApiClient) -> Result<(Vec<Team>, bool), CliError> {
     let mut teams = Vec::new();
     let mut cursor = None;
     for _ in 0..MAX_TEAM_PAGES {
@@ -215,7 +218,7 @@ async fn discover_teams(cli: &CliInvocation) -> Result<(Vec<Team>, bool), CliErr
 }
 
 async fn discover_projects(
-    cli: &CliInvocation,
+    cli: &super::api::ApiClient,
     scope_id: Option<&str>,
     scope_slug: &str,
 ) -> Result<(Vec<ProjectContext>, bool), CliError> {
@@ -296,14 +299,16 @@ fn failed_discovery(error: CliError, version: Option<String>, connection_id: &st
 }
 
 pub async fn page(
-    cli: &CliInvocation,
+    invocation: &CliInvocation,
     target: &Target,
     cursor: Option<&str>,
     identity: Option<&str>,
 ) -> Result<ActivityPage, CliError> {
+    let cli = super::api::ApiClient::vercel(invocation);
+    verified_user(&cli).await?;
     let (project_id, scope) = validate_vercel_target(target)?;
     let endpoint = deployment_endpoint(project_id, RECENT_PAGE_SIZE, cursor, None)?;
-    let response: DeploymentsResponse = vercel_json(cli, &endpoint, Some(scope)).await?;
+    let response: DeploymentsResponse = vercel_json(&cli, &endpoint, scope).await?;
     let next_cursor = pagination_cursor(response.pagination)?;
     if next_cursor
         .as_deref()
@@ -328,15 +333,17 @@ pub async fn page(
 }
 
 pub async fn active(
-    cli: &CliInvocation,
+    invocation: &CliInvocation,
     target: &Target,
     identity: Option<&str>,
 ) -> Result<ActivityPage, CliError> {
+    let cli = super::api::ApiClient::vercel(invocation);
+    verified_user(&cli).await?;
     let (project_id, scope) = validate_vercel_target(target)?;
     let results = join_all(
         ACTIVE_STATES
             .iter()
-            .map(|state| fetch_active_state(cli, project_id, scope, state)),
+            .map(|state| fetch_active_state(&cli, project_id, scope, state)),
     )
     .await;
     let mut deployments = Vec::new();
@@ -382,9 +389,9 @@ pub async fn active(
 }
 
 async fn fetch_active_state(
-    cli: &CliInvocation,
+    cli: &super::api::ApiClient,
     project_id: &str,
-    scope: &str,
+    scope: Option<&str>,
     state: &str,
 ) -> (Vec<Deployment>, bool, Option<CliError>) {
     let mut deployments = Vec::new();
@@ -395,7 +402,7 @@ async fn fetch_active_state(
                 Ok(endpoint) => endpoint,
                 Err(error) => return (deployments, false, Some(error)),
             };
-        let response: DeploymentsResponse = match vercel_json(cli, &endpoint, Some(scope)).await {
+        let response: DeploymentsResponse = match vercel_json(cli, &endpoint, scope).await {
             Ok(response) => response,
             Err(error) => return (deployments, false, Some(error)),
         };
@@ -451,7 +458,7 @@ fn validate_timestamp_cursor(value: &str) -> Result<(), CliError> {
     }
 }
 
-fn validate_vercel_target(target: &Target) -> Result<(&str, &str), CliError> {
+fn validate_vercel_target(target: &Target) -> Result<(&str, Option<&str>), CliError> {
     if target.provider != Provider::Vercel {
         return Err(CliError::InvalidOutput);
     }
@@ -462,13 +469,14 @@ fn validate_vercel_target(target: &Target) -> Result<(&str, &str), CliError> {
     let scope = target
         .metadata
         .get("scopeSlug")
+        .map(String::as_str)
         .ok_or(CliError::InvalidOutput)?;
     validate_vercel_id(project_id).map_err(|_| CliError::InvalidOutput)?;
     validate_scope(scope).map_err(|_| CliError::InvalidOutput)?;
     if let Some(team_id) = target.metadata.get("teamId") {
         validate_vercel_id(team_id).map_err(|_| CliError::InvalidOutput)?;
     }
-    Ok((project_id, scope))
+    Ok((project_id, Some(scope)))
 }
 
 fn target_issue(target: &Target, message: String) -> Issue {
@@ -495,14 +503,14 @@ pub async fn collect(
             vec![Issue {
                 provider: Provider::Vercel,
                 connection_id: Some(connection_id.into()),
-                message:
-                    "Vercel CLI was not found. Cached Vercel activity is shown when available."
-                        .into(),
+                message: "Vercel CLI is unavailable. Cached activity is shown when available."
+                    .into(),
                 target_id: None,
             }],
         );
     };
-    let identity = match current_user(cli).await {
+    let cli = super::api::ApiClient::vercel(cli);
+    let identity = match verified_user(&cli).await {
         Ok(identity) => Some(identity),
         Err(error) => {
             return (
@@ -524,7 +532,7 @@ pub async fn collect(
             uid: Some(user.id.as_str()),
             username: Some(user.username.as_str()),
         });
-        match collect_project(cli, target, cutoff, verified_identity).await {
+        match collect_project(&cli, target, cutoff, verified_identity).await {
             Ok((mut target_activities, truncated)) => {
                 activities.append(&mut target_activities);
                 if truncated {
@@ -551,7 +559,7 @@ pub async fn collect(
 }
 
 async fn collect_project(
-    cli: &CliInvocation,
+    cli: &super::api::ApiClient,
     target: &Target,
     cutoff: DateTime<Utc>,
     identity: Option<VerifiedIdentity<'_>>,
@@ -561,7 +569,7 @@ async fn collect_project(
     let mut cursor = None;
     for _ in 0..MAX_DEPLOYMENT_PAGES {
         let endpoint = deployment_endpoint(project_id, PAGE_SIZE, cursor.as_deref(), None)?;
-        let response: DeploymentsResponse = vercel_json(cli, &endpoint, Some(scope)).await?;
+        let response: DeploymentsResponse = vercel_json(cli, &endpoint, scope).await?;
         for deployment in response.deployments {
             let terminal_time = deployment
                 .ready
@@ -592,30 +600,32 @@ async fn collect_project(
     Ok((activities, cursor.is_some()))
 }
 
-async fn current_user(cli: &CliInvocation) -> Result<VercelUser, CliError> {
+async fn current_user(cli: &super::api::ApiClient) -> Result<VercelUser, CliError> {
     vercel_json::<UserEnvelope>(cli, "/v2/user", None)
         .await
         .map(|response| response.user)
 }
 
+pub(crate) async fn vercel_cli_identity(cli: &CliInvocation) -> Result<(String, String), CliError> {
+    let user = current_user(&super::api::ApiClient::vercel(cli)).await?;
+    Ok((user.id, user.username))
+}
+
+async fn verified_user(cli: &super::api::ApiClient) -> Result<VercelUser, CliError> {
+    let user = current_user(cli).await?;
+    if identity_matches(cli, &user.id) {
+        Ok(user)
+    } else {
+        Err(CliError::AccountMismatch)
+    }
+}
+
 async fn vercel_json<T: for<'de> Deserialize<'de>>(
-    cli: &CliInvocation,
+    cli: &super::api::ApiClient,
     endpoint: &str,
     scope: Option<&str>,
 ) -> Result<T, CliError> {
-    let mut args = vec![
-        "api",
-        endpoint,
-        "--method",
-        "GET",
-        "--raw",
-        "--non-interactive",
-    ];
-    if let Some(scope) = scope {
-        validate_scope(scope).map_err(|_| CliError::InvalidOutput)?;
-        args.extend(["--scope", scope]);
-    }
-    cli.json(&args).await
+    cli.vercel_get(endpoint, scope).await
 }
 
 fn validate_scope(value: &str) -> Result<(), ()> {

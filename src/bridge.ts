@@ -18,6 +18,11 @@ import {
 } from "./domain";
 import { DEMO_TARGETS, demoSnapshot } from "./demo";
 import {
+  githubCliBindingSchema,
+  githubUsernameSchema,
+  type GithubProvider,
+} from "./cliAccounts";
+import {
   applySettingsChange,
   settingsChangeSchema,
   type SettingsChange,
@@ -43,6 +48,38 @@ const call = async <T>(
   args?: Record<string, unknown>,
 ): Promise<T> => rememberLanguage(schema.parse(await invoke(command, args)));
 export const bridge = {
+  githubCliAccounts: async () => {
+    if (isPreview) return ["orbit-developer", "orbit-work"];
+    return call("get_github_cli_accounts", z.array(githubUsernameSchema));
+  },
+  connectGithubCliAccount: async (
+    provider: GithubProvider,
+    connectionId: string,
+    username: string,
+  ) => {
+    const input = githubCliBindingSchema.parse({
+      provider,
+      connectionId,
+      username,
+    });
+    if (!isPreview)
+      return call("connect_github_cli_account", accountSchema, input);
+    const account = preview.settings.accounts.find(
+      (item) => item.id === connectionId && item.provider === provider,
+    );
+    if (!account) throw new Error("Select an account before connecting.");
+    const next = { ...account, cliUsername: username };
+    preview = {
+      ...preview,
+      settings: {
+        ...preview.settings,
+        accounts: preview.settings.accounts.map((item) =>
+          item.id === connectionId ? next : item,
+        ),
+      },
+    };
+    return next;
+  },
   connectBitbucket: async (
     email: string,
     token: string,
@@ -104,6 +141,9 @@ export const bridge = {
       ? rememberLanguage(preview)
       : call("get_snapshot", snapshotSchema),
   refresh: async () => (isPreview ? preview : call("refresh", snapshotSchema)),
+  requestRefresh: async () => {
+    if (!isPreview) await invoke("request_refresh");
+  },
   save: async (settings: Settings) => {
     const validated = settingsSchema.parse(settings);
     if (!isPreview)
@@ -182,13 +222,15 @@ export const bridge = {
         profile,
       });
     const account = accountSchema.parse({
-      id: ["github", "vercel", "aws"].includes(provider)
+      id: ["github", "github-deployments", "vercel", "aws"].includes(provider)
         ? `${provider}:demo-${Date.now()}`
         : `${provider}:local`,
       provider,
       label,
       profile,
-      mode: ["github", "vercel"].includes(provider) ? "isolated" : "local",
+      mode: ["github", "github-deployments", "vercel"].includes(provider)
+        ? "isolated"
+        : "local",
     });
     preview = {
       ...preview,

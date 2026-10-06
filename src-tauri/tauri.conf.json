@@ -43,9 +43,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": {
-      "resources/tools/": "tools/"
-    },
     "category": "DeveloperTool",
     "shortDescription": "Your deployments, in sight.",
     "macOS": {

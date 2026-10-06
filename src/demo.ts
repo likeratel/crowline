@@ -101,7 +101,9 @@ function activity(
 export function demoSnapshot(): Snapshot {
   return {
     settings: {
+      hiddenActivities: [],
       scope: "mine",
+      displayScopes: { providers: {}, targets: {} },
       historyHours: 24,
       panel: panelSettingsSchema.parse({}),
       preferences: preferencesSchema.parse({}),
@@ -155,6 +157,15 @@ export function demoSnapshot(): Snapshot {
     refreshing: false,
     history: [],
     pendingTargets: [],
+    queryHealth: DEMO_TARGETS.map((target) => ({
+      provider: target.provider,
+      connectionId: target.connectionId,
+      targetId: target.id,
+      status: "success",
+      lastAttemptAt: ago(0),
+      lastSuccessfulAt: ago(0),
+    })),
+    pollIntervalSeconds: 30,
     lastUpdatedAt: ago(0),
   };
 }

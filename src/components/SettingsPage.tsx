@@ -1,11 +1,12 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
-import type { Snapshot } from "../domain";
+import type { Provider, Snapshot } from "../domain";
 import { useI18n } from "../i18n";
 import { settingsCopy, type SettingsTab } from "../settingsCopy";
 import { Connections } from "./Connections";
 import { GeneralPreferences } from "./GeneralPreferences";
 import { NotificationPreferences } from "./NotificationPreferences";
 import { PanelPreferences } from "./PanelPreferences";
+import { SettingsRecoveryNotice } from "./SettingsRecoveryNotice";
 import "../styles/settings.css";
 const tabs: SettingsTab[] = [
   "connections",
@@ -21,6 +22,9 @@ type Props = {
   error: string | null;
   onRefresh: () => Promise<void>;
   onReload: () => Promise<void>;
+  requestedProvider?: Provider;
+  requestedConnectionId?: string;
+  connectionRequest?: number;
 };
 export function SettingsPage({
   tab,
@@ -30,9 +34,13 @@ export function SettingsPage({
   error,
   onRefresh,
   onReload,
+  requestedProvider,
+  requestedConnectionId,
+  connectionRequest,
 }: Props) {
   const { locale } = useI18n();
   const [connectionBusy, setConnectionBusy] = useState(false);
+  const settingsLocked = Boolean(snapshot.settingsError);
   const c = (key: Parameters<typeof settingsCopy>[1]) =>
     settingsCopy(locale, key);
   const [visited, setVisited] = useState<SettingsTab[]>([tab]);
@@ -80,6 +88,7 @@ export function SettingsPage({
           <h1>{c("title")}</h1>
         </div>
       </header>
+      <SettingsRecoveryNotice error={snapshot.settingsError} />
       <div className="settings-tabs" role="tablist" aria-label={c("title")}>
         {tabs.map((item) => (
           <button
@@ -104,22 +113,35 @@ export function SettingsPage({
           aria-labelledby={`settings-tab-${item}`}
           hidden={tab !== item}
         >
-          {(visited.includes(item) || tab === item) &&
-            (item === "connections" ? (
-              <Connections
-                snapshot={snapshot}
-                saving={busy}
-                onBusyChange={setConnectionBusy}
-                onRefresh={onRefresh}
-                onReload={onReload}
-              />
-            ) : item === "notifications" ? (
-              <NotificationPreferences {...props} />
-            ) : item === "panel" ? (
-              <PanelPreferences {...props} embedded />
-            ) : (
-              <GeneralPreferences {...props} />
-            ))}
+          <fieldset className="settings-lock-surface" disabled={settingsLocked}>
+            {(visited.includes(item) || tab === item) &&
+              (item === "connections" ? (
+                <>
+                  {error && (
+                    <p className="notice warning" role="alert">
+                      {error}
+                    </p>
+                  )}
+                  <Connections
+                    snapshot={snapshot}
+                    requestedProvider={requestedProvider}
+                    requestedConnectionId={requestedConnectionId}
+                    connectionRequest={connectionRequest}
+                    onNotifications={() => select("notifications")}
+                    saving={busy}
+                    onBusyChange={setConnectionBusy}
+                    onRefresh={onRefresh}
+                    onReload={onReload}
+                  />
+                </>
+              ) : item === "notifications" ? (
+                <NotificationPreferences {...props} />
+              ) : item === "panel" ? (
+                <PanelPreferences {...props} embedded />
+              ) : (
+                <GeneralPreferences {...props} />
+              ))}
+          </fieldset>
         </div>
       ))}
     </section>

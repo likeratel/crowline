@@ -17,10 +17,7 @@
     "check": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "tools:prepare": "node scripts/prepare-tools.mjs",
-    "desktop:build": "pnpm tools:prepare && pnpm tauri build",
-    "test:tools": "node --test scripts/prepare-tools.test.mjs scripts/isolated-github.test.mjs",
-    "prepare-tools": "node scripts/prepare-tools.mjs",
+    "desktop:build": "pnpm tauri build",
     "format:check": "prettier --check src tests *.ts *.json index.html"
   },
   "dependencies": {

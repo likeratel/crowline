@@ -33,6 +33,7 @@
   --control-height: 36px;
   --control-compact: 28px;
   --radius-control: 8px;
+  --radius-compact: 6px;
   --radius-surface: 12px;
 }
 
@@ -103,6 +104,7 @@ p {
 select {
   appearance: none;
   -webkit-appearance: none;
+  height: var(--control-height);
   min-height: var(--control-height);
   padding: 0 var(--space-8) 0 var(--space-3);
   border: 1px solid var(--border);
@@ -113,6 +115,8 @@ select {
   background-repeat: no-repeat;
   background-position: right var(--space-3) center;
   background-size: var(--space-3);
+  font-size: 12px;
+  line-height: 1;
 }
 
 .button {
@@ -120,6 +124,7 @@ select {
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
+  height: var(--control-height);
   min-height: var(--control-height);
   padding: 0 var(--space-3);
   border: 1px solid var(--border);
@@ -156,4 +161,91 @@ select {
 
 .icon-button:hover {
   background: var(--border);
+}
+
+/* Shared stateful controls: one size and one interaction model across settings. */
+.switch-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-height);
+  cursor: pointer;
+  position: relative;
+  font-weight: 600;
+}
+.switch-control input {
+  position: absolute;
+  width: 40px;
+  height: 24px;
+  opacity: 0;
+  margin: 0;
+}
+.switch-track {
+  display: flex;
+  align-items: center;
+  width: 40px;
+  height: 24px;
+  padding: 3px;
+  border-radius: 20px;
+  background: var(--soft);
+  border: 1px solid var(--muted);
+  flex-shrink: 0;
+}
+.switch-track > span {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.switch-control input:checked + .switch-track {
+  background: var(--text);
+  border-color: var(--text);
+}
+.switch-control input:checked + .switch-track > span {
+  transform: translateX(16px);
+  background: var(--canvas);
+}
+.switch-control input:focus-visible + .switch-track {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+}
+.switch-control input:disabled ~ span {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.save-result {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--muted);
+  font-size: 12px;
+}
+.page-description,
+.section-intro {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  margin-top: var(--space-2);
+}
+.section-intro {
+  margin: 0 0 var(--space-4);
+}
+.display-scope-control {
+  min-width: 0;
+}
+.display-scope-control label {
+  display: grid;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: 12px;
+}
+.display-scope-control select {
+  width: 100%;
+  min-width: 0;
 }

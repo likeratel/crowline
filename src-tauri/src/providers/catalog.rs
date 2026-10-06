@@ -142,7 +142,7 @@ pub async fn active(
     }
     let cli = cli.ok_or_else(|| {
         format!(
-            "{} CLI is not installed. Connect its local CLI session first.",
+            "{} CLI is not installed or this account must be reconnected.",
             target.provider.as_str()
         )
     })?;
@@ -173,6 +173,24 @@ pub async fn page(
     if target.provider == Provider::Bitbucket {
         return bitbucket::page(target, cursor).await;
     }
+    let api_result = match target.provider {
+        Provider::Github => Some(match cli {
+            Some(cli) => github::page(cli, target, cursor, identity).await,
+            None => Err(crate::cli::CliError::Unavailable),
+        }),
+        Provider::Vercel => Some(match cli {
+            Some(cli) => vercel::page(cli, target, cursor, identity).await,
+            None => Err(crate::cli::CliError::Unavailable),
+        }),
+        Provider::GithubDeployments => Some(match cli {
+            Some(cli) => github_deployments::page(cli, target, cursor, identity).await,
+            None => Err(crate::cli::CliError::Unavailable),
+        }),
+        _ => None,
+    };
+    if let Some(result) = api_result {
+        return result.map_err(|error| error.user_message(target.provider.as_str()));
+    }
     let cli = cli.ok_or_else(|| {
         format!(
             "{} CLI is not installed. Connect its local CLI session first.",
@@ -180,11 +198,6 @@ pub async fn page(
         )
     })?;
     match target.provider {
-        Provider::Github => github::page(cli, target, cursor, identity).await,
-        Provider::Vercel => vercel::page(cli, target, cursor, identity).await,
-        Provider::GithubDeployments => {
-            github_deployments::page(cli, target, cursor, identity).await
-        }
         Provider::Railway
         | Provider::Netlify
         | Provider::Render

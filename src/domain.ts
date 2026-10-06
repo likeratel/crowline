@@ -23,6 +23,7 @@ export const PROVIDERS = [
   "fastlane",
 ] as const;
 export const providerSchema = z.enum(PROVIDERS);
+export const displayScopeSchema = z.enum(["mine", "all"]);
 export const statusSchema = z.enum([
   "queued",
   "running",
@@ -43,6 +44,7 @@ export const accountSchema = z.object({
   label: z.string().min(1),
   mode: z.enum(["local", "isolated"]),
   profile: optionalText,
+  cliUsername: optionalText,
 });
 export const targetSchema = z.object({
   id: z.string().min(1),
@@ -99,8 +101,48 @@ export const preferencesSchema = z.object({
 export type Preferences = z.infer<typeof preferencesSchema>;
 export type NotificationRule = z.infer<typeof notificationRuleSchema>;
 
+export const displayScopesSchema = z.object({
+  providers: z.partialRecord(providerSchema, displayScopeSchema).default({}),
+  targets: z
+    .record(z.string().min(1).max(1600), displayScopeSchema)
+    .default({}),
+});
+export type DisplayScopes = z.infer<typeof displayScopesSchema>;
+
+const activityIdentifier = z
+  .string()
+  .refine(
+    (value) =>
+      value.trim().length > 0 &&
+      !value.includes("\0") &&
+      new TextEncoder().encode(value).length <= 512,
+    "Invalid activity identifier",
+  );
+export const activityKeySchema = z.object({
+  provider: providerSchema,
+  targetId: activityIdentifier,
+  activityId: activityIdentifier,
+});
+export type ActivityKey = z.infer<typeof activityKeySchema>;
+export const activityKeyString = (key: ActivityKey) =>
+  JSON.stringify([key.provider, key.targetId, key.activityId]);
+export const activityIdentity = (activity: Activity): ActivityKey => ({
+  provider: activity.provider,
+  targetId: activity.targetId ?? "",
+  activityId: activity.id,
+});
+export const isHiddenActivity = (activity: Activity, settings: Settings) =>
+  settings.hiddenActivities.some(
+    (key) =>
+      key.provider === activity.provider &&
+      key.targetId === activity.targetId &&
+      key.activityId === activity.id,
+  );
+
 export const settingsSchema = z.object({
-  scope: z.enum(["mine", "all"]),
+  hiddenActivities: z.array(activityKeySchema).max(10000).default([]),
+  scope: displayScopeSchema,
+  displayScopes: displayScopesSchema.prefault({}),
   historyHours: z.union([z.literal(24), z.literal(168)]),
   targets: z.array(targetSchema),
   accounts: z.array(accountSchema),
@@ -155,14 +197,26 @@ export const targetHistorySchema = z.object({
   generation: z.number().int().nonnegative(),
 });
 export type TargetHistory = z.infer<typeof targetHistorySchema>;
+export const queryHealthSchema = z.object({
+  provider: providerSchema,
+  connectionId: z.string().min(1),
+  targetId: z.string().min(1),
+  status: z.enum(["checking", "success", "partial", "error"]),
+  lastAttemptAt: date,
+  lastSuccessfulAt: date.nullish(),
+});
+export type QueryHealth = z.infer<typeof queryHealthSchema>;
 export const snapshotSchema = z.object({
   settings: settingsSchema,
+  settingsError: z.string().nullable().optional(),
   connections: z.array(connectionSchema),
   activities: z.array(activitySchema),
   issues: z.array(issueSchema),
   refreshing: z.boolean(),
   history: z.array(targetHistorySchema).default([]),
   pendingTargets: z.array(z.string()).default([]),
+  queryHealth: z.array(queryHealthSchema).default([]),
+  pollIntervalSeconds: z.number().int().positive().max(3600).default(120),
   lastUpdatedAt: date.nullish(),
 });
 export const discoverySchema = z.object({
@@ -188,6 +242,27 @@ export type Snapshot = z.infer<typeof snapshotSchema>;
 export type Connection = z.infer<typeof connectionSchema>;
 export type Discovery = z.infer<typeof discoverySchema>;
 export type LoginStatus = z.infer<typeof loginSchema>;
+
+export function effectiveDisplayScope(
+  settings: Settings,
+  source: {
+    provider: Provider;
+    connectionId?: string;
+    targetId?: string;
+  },
+): "mine" | "all" {
+  const targetScope =
+    source.connectionId && source.targetId
+      ? settings.displayScopes.targets[
+          `${source.provider}:${source.connectionId}:${source.targetId}`
+        ]
+      : undefined;
+  return (
+    targetScope ??
+    settings.displayScopes.providers[source.provider] ??
+    settings.scope
+  );
+}
 export const PROVIDER_NAMES: Record<Provider, string> = {
   github: "GitHub Actions",
   vercel: "Vercel",
@@ -227,14 +302,108 @@ export const isActive = (activity: Activity) =>
     activity.rawStatus.toUpperCase() === "BLOCKED"
   );
 
-const MAX_ACTIVE_AGE_MS = 24 * 60 * 60 * 1000;
-export const isVisibleActivity = (activity: Activity, now = Date.now()) =>
+export const isVisibleActivity = (activity: Activity, _now = Date.now()) =>
   !(
     activity.provider === "vercel" &&
     activity.rawStatus.toUpperCase() === "BLOCKED"
-  ) &&
-  (!isActive(activity) ||
-    Date.parse(activity.startedAt) >= now - MAX_ACTIVE_AGE_MS);
+  );
+
+type DecoratedActivity = {
+  activity: Activity;
+  eligible: boolean;
+  index: number;
+  key: string;
+};
+
+type ActivityGroup = {
+  eligibleMine: boolean;
+  firstIndex: number;
+  key: string;
+  latest: Activity;
+  representative?: Activity;
+};
+
+function activityGroup(item: DecoratedActivity): ActivityGroup {
+  return {
+    eligibleMine: item.eligible && item.activity.ownership === "mine",
+    firstIndex: item.index,
+    key: item.key,
+    latest: item.activity,
+    representative: item.eligible ? item.activity : undefined,
+  };
+}
+
+function addToActivityGroup(
+  group: ActivityGroup,
+  item: DecoratedActivity,
+): ActivityGroup {
+  return {
+    ...group,
+    eligibleMine:
+      group.eligibleMine ||
+      (item.eligible && item.activity.ownership === "mine"),
+    latest: newerActivity(group.latest, item.activity),
+    representative: item.eligible
+      ? group.representative
+        ? newerActivity(group.representative, item.activity)
+        : item.activity
+      : group.representative,
+  };
+}
+
+function reconcileActivities(
+  activities: Activity[],
+  settings: Settings,
+): Array<{ activity: Activity; firstIndex: number }> {
+  const decorated = activities
+    .map((activity, index) => ({
+      activity,
+      eligible:
+        effectiveDisplayScope(settings, activity) === "all" ||
+        activity.ownership === "mine",
+      index,
+      key: JSON.stringify([
+        activity.provider,
+        activity.targetId ?? "",
+        activity.id,
+      ]),
+    }))
+    .sort((a, b) =>
+      a.key === b.key ? a.index - b.index : a.key < b.key ? -1 : 1,
+    );
+  const groups: ActivityGroup[] = [];
+  let current: ActivityGroup | undefined;
+  for (const item of decorated) {
+    if (!current || current.key !== item.key) {
+      if (current) groups.push(current);
+      current = activityGroup(item);
+    } else {
+      current = addToActivityGroup(current, item);
+    }
+  }
+  if (current) groups.push(current);
+
+  return groups.flatMap(
+    ({ eligibleMine, firstIndex, latest, representative }) =>
+      representative
+        ? [
+            {
+              activity: {
+                ...representative,
+                status: latest.status,
+                rawStatus: latest.rawStatus,
+                finishedAt: latest.finishedAt,
+                updatedAt: latest.updatedAt,
+                ownership: eligibleMine
+                  ? ("mine" as const)
+                  : representative.ownership,
+              },
+              firstIndex,
+            },
+          ]
+        : [],
+  );
+}
 
 export function visibleActivities(
   snapshot: Snapshot,
@@ -247,38 +416,14 @@ export function visibleActivities(
   const cutoff = now - snapshot.settings.historyHours * 60 * 60 * 1000;
   const candidates = snapshot.activities.filter(
     (activity) =>
+      !isHiddenActivity(activity, snapshot.settings) &&
       (connectionId === "all" || activity.connectionId === connectionId) &&
       (provider === "all" || activity.provider === provider),
   );
-  const reconciled = candidates.reduce<Record<string, Activity>>(
-    (previous, activity) => {
-      const key = `${activity.provider}:${activity.id}`;
-      const existing = previous[key];
-      if (!existing) return { ...previous, [key]: activity };
-      const delta =
-        Date.parse(activity.updatedAt) - Date.parse(existing.updatedAt);
-      const terminal = (item: Activity) =>
-        !isActive(item) && item.status !== "unknown";
-      const newer =
-        delta > 0 || (delta === 0 && terminal(activity) && !terminal(existing));
-      const sameState =
-        delta === 0 && terminal(activity) === terminal(existing);
-      const latest =
-        newer || (sameState && activity.ownership === "mine")
-          ? activity
-          : existing;
-      const ownership =
-        existing.ownership === "mine" || activity.ownership === "mine"
-          ? "mine"
-          : latest.ownership;
-      return { ...previous, [key]: { ...latest, ownership } };
-    },
-    {},
-  );
-  const filtered = Object.values(reconciled).filter(
-    (activity) =>
+  const reconciled = reconcileActivities(candidates, snapshot.settings);
+  const filtered = reconciled.filter(
+    ({ activity }) =>
       isVisibleActivity(activity, now) &&
-      (snapshot.settings.scope === "all" || activity.ownership === "mine") &&
       (isActive(activity) ||
         activity.status === "unknown" ||
         Date.parse(activity.updatedAt) >= cutoff) &&
@@ -288,11 +433,33 @@ export function visibleActivities(
           activity.project,
           activity.branch,
           activity.actor,
+          activity.workflowName,
         ].some((part) => part?.toLocaleLowerCase().includes(query))),
   );
-  return filtered.sort(
-    (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
-  );
+  return filtered
+    .sort(
+      (a, b) =>
+        Date.parse(b.activity.updatedAt) - Date.parse(a.activity.updatedAt) ||
+        a.firstIndex - b.firstIndex,
+    )
+    .map(({ activity }) => activity);
+}
+
+function newerActivity(current: Activity, candidate: Activity): Activity {
+  const delta = Date.parse(candidate.updatedAt) - Date.parse(current.updatedAt);
+  const terminal = (item: Activity) =>
+    !isActive(item) && item.status !== "unknown";
+  if (delta > 0 || (delta === 0 && terminal(candidate) && !terminal(current))) {
+    return candidate;
+  }
+  if (
+    delta === 0 &&
+    terminal(candidate) === terminal(current) &&
+    candidate.ownership === "mine"
+  ) {
+    return candidate;
+  }
+  return current;
 }
 
 export const targetKey = (target: Target) =>
@@ -323,15 +490,23 @@ export function duration(activity: Activity, now = Date.now()): string {
 
 export function panelActivities(snapshot: Snapshot, now = Date.now()) {
   const { panel } = snapshot.settings;
+  const hiddenTargets = new Set(panel.hiddenTargets);
+  const providerTargets = new Set(
+    snapshot.settings.targets
+      .filter((target) => !hiddenTargets.has(targetKey(target)))
+      .map((target) =>
+        JSON.stringify([target.provider, target.connectionId, target.id]),
+      ),
+  );
   const activities = snapshot.activities.filter(
     (activity) =>
       panel.providers.includes(activity.provider) &&
-      snapshot.settings.targets.some(
-        (target) =>
-          target.provider === activity.provider &&
-          target.connectionId === activity.connectionId &&
-          target.id === activity.targetId &&
-          !panel.hiddenTargets.includes(targetKey(target)),
+      providerTargets.has(
+        JSON.stringify([
+          activity.provider,
+          activity.connectionId,
+          activity.targetId,
+        ]),
       ),
   );
   return sortPanelActivities(
@@ -350,24 +525,46 @@ export function sortPanelActivities(
 }
 
 export function latestCompleted(activities: Activity[]): Activity[] {
-  return Object.values(
-    activities
-      .filter((item) => !isActive(item) && item.status !== "unknown")
-      .reduce<Record<string, Activity>>((groups, item) => {
-        // Account and stable target IDs prevent same-name projects from merging.
-        const key = JSON.stringify([
-          item.provider,
-          item.connectionId,
-          item.targetId,
-          item.kind,
-          item.branch,
-          item.provider === "github" ? item.title : "",
-        ]);
-        const previous = groups[key];
-        return !previous ||
-          Date.parse(item.updatedAt) > Date.parse(previous.updatedAt)
-          ? { ...groups, [key]: item }
-          : groups;
-      }, {}),
-  );
+  const decorated = activities
+    .filter((item) => !isActive(item) && item.status !== "unknown")
+    .map((activity, index) => ({
+      activity,
+      index,
+      // Account and stable target IDs prevent same-name projects from merging.
+      key: JSON.stringify([
+        activity.provider,
+        activity.connectionId,
+        activity.targetId,
+        activity.kind,
+        activity.branch,
+        activity.provider === "github" ? activity.title : "",
+      ]),
+    }))
+    .sort((a, b) =>
+      a.key === b.key ? a.index - b.index : a.key < b.key ? -1 : 1,
+    );
+  const groups: Array<{
+    firstIndex: number;
+    key: string;
+    latest: Activity;
+  }> = [];
+  let current: (typeof groups)[number] | undefined;
+  for (const item of decorated) {
+    if (!current || current.key !== item.key) {
+      if (current) groups.push(current);
+      current = {
+        firstIndex: item.index,
+        key: item.key,
+        latest: item.activity,
+      };
+    } else if (
+      Date.parse(item.activity.updatedAt) > Date.parse(current.latest.updatedAt)
+    ) {
+      current = { ...current, latest: item.activity };
+    }
+  }
+  if (current) groups.push(current);
+  return groups
+    .sort((a, b) => a.firstIndex - b.firstIndex)
+    .map(({ latest }) => latest);
 }

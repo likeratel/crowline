@@ -9,10 +9,10 @@ const messages = {
     "为每个项目设置要通知的运行和结果。",
   ],
   enabled: [
-    "배포 알림 받기",
-    "Enable deployment notifications",
-    "デプロイ通知を受け取る",
-    "接收部署通知",
+    "실행 결과 알림 받기",
+    "Enable run result notifications",
+    "実行結果の通知を受け取る",
+    "接收运行结果通知",
   ],
   desktopOnly: [
     "데스크톱 앱에서 사용할 수 있습니다.",
@@ -26,6 +26,20 @@ const messages = {
     "権限を確認中…",
     "正在检查权限…",
   ],
+  checkFailed: [
+    "알림 권한을 확인하지 못했습니다.",
+    "Could not check notification permission.",
+    "通知の許可状態を確認できませんでした。",
+    "无法检查通知权限。",
+  ],
+  retryCheck: ["다시 확인", "Check again", "もう一度確認", "重新检查"],
+  requestFailed: [
+    "알림 권한을 요청하지 못했습니다. 다시 시도해 주세요.",
+    "Could not request notification permission. Try again.",
+    "通知の許可をリクエストできませんでした。もう一度お試しください。",
+    "无法请求通知权限，请重试。",
+  ],
+  errorDetails: ["오류 상세", "Error details", "エラーの詳細", "错误详情"],
   granted: [
     "알림이 허용되어 있습니다.",
     "Notifications are allowed.",

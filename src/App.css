@@ -116,7 +116,7 @@
   min-width: 0;
   flex: 1;
   max-width: 1440px;
-  padding: 38px 38px 18px;
+  padding: var(--space-6) var(--space-8) var(--space-4);
 }
 .eyebrow {
   display: flex;
@@ -148,7 +148,7 @@
   font-size: 30px;
   font-weight: 640;
   letter-spacing: -1.4px;
-  margin: 12px 0 10px;
+  margin: 0 0 var(--space-2);
 }
 .main-header p {
   font-size: 12px;
@@ -248,7 +248,7 @@
   height: var(--control-height);
   padding: var(--space-1);
   background: #090a0c;
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   flex-shrink: 0;
 }
 .segmented button {
@@ -269,7 +269,7 @@
   align-items: center;
   gap: 7px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--surface);
   height: var(--control-height);
   padding: 0 var(--space-3);
@@ -288,6 +288,8 @@
 }
 .search-box:focus-within {
   border-color: var(--focus);
+  outline: 2px solid var(--focus);
+  outline-offset: var(--space-1);
 }
 .search-box input::placeholder {
   color: var(--muted);
@@ -306,8 +308,8 @@
   gap: 8px;
   justify-content: space-between;
   align-items: center;
-  min-height: 38px;
-  margin-bottom: 8px;
+  min-height: var(--control-compact);
+  margin-block: var(--space-2);
 }
 .scope-description button {
   font-size: 12px;
@@ -371,21 +373,60 @@
   background: var(--surface);
   overflow: hidden;
 }
+.activity-entry {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+}
+.activity-entry:last-child {
+  border-bottom: 0;
+}
 .activity-row {
   display: flex;
   align-items: center;
   gap: 13px;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   text-align: left;
   padding: 17px 16px;
-  border-bottom: 1px solid var(--border);
   transition: background 0.15s;
 }
-.activity-row:last-child {
-  border-bottom: 0;
-}
-.activity-row:hover {
+.activity-row:hover,
+.activity-entry:focus-within .activity-row {
   background: var(--hover);
+}
+.activity-dismiss {
+  display: grid;
+  place-items: center;
+  flex: 0 0 var(--control-height);
+  width: var(--control-height);
+  min-height: var(--control-height);
+  margin: auto 0;
+  color: var(--muted);
+  border-radius: var(--radius-control);
+}
+.activity-dismiss:hover {
+  color: var(--text);
+  background: var(--soft);
+}
+.activity-undo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  font-size: 12px;
+}
+.activity-hide-feedback {
+  margin: var(--space-2) 0;
+  color: #d5a4a4;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .service-icon {
   display: grid;
@@ -420,6 +461,9 @@
   color: var(--muted);
 }
 .activity-row:hover .row-arrow {
+  opacity: 1;
+}
+.activity-entry:focus-within .row-arrow {
   opacity: 1;
 }
 .activity-meta {
@@ -496,6 +540,7 @@
 .empty-section svg {
   color: #8c939e;
 }
+
 .main-footer {
   display: flex;
   justify-content: space-between;
@@ -546,6 +591,55 @@
 }
 .notice > .icon-button {
   margin-left: auto;
+}
+.settings-recovery {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 10px 0 16px;
+  border: 1px solid #59422f;
+  border-radius: 8px;
+  padding: 12px;
+  background: #2b221b;
+  color: #dcc39b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.settings-recovery > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.settings-recovery > div {
+  min-width: 0;
+}
+.settings-recovery-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 3px;
+}
+.settings-recovery-heading span {
+  border: 1px solid #6a5037;
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+.settings-recovery details {
+  margin-top: 5px;
+}
+.settings-recovery summary {
+  cursor: pointer;
+}
+.settings-recovery details p {
+  margin-top: 4px;
+  color: #c9ad82;
+  overflow-wrap: anywhere;
+}
+.main-content[data-settings-locked="true"] .activity-dismiss {
+  display: none;
 }
 .onboarding-empty {
   display: flex;
@@ -662,4 +756,109 @@
 }
 .compact-empty .empty-section svg {
   display: none;
+}
+
+.monitor-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  padding-block: var(--space-3);
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+.monitor-summary > span,
+.monitor-summary > button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-compact);
+}
+.monitor-summary strong {
+  color: var(--text);
+  font-size: 16px;
+}
+.monitor-summary > button {
+  color: var(--text);
+}
+.connection-health-summary {
+  margin-left: auto;
+}
+.display-scope-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-3);
+}
+.scope-default-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.scope-default-choice > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.scope-management {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--muted);
+  font-size: 12px;
+}
+.scope-management .text-button {
+  margin-left: auto;
+}
+@media (max-width: 620px) {
+  .connection-health-summary {
+    margin-left: 0;
+  }
+  .scope-default-choice,
+  .display-scope-bar > .display-scope-control {
+    width: 100%;
+  }
+  .scope-default-choice .segmented button {
+    flex: 1;
+  }
+  .scope-management .text-button {
+    margin-left: 0;
+  }
+}
+
+.display-scope-bar > .display-scope-control label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.display-scope-bar > .display-scope-control label > span {
+  white-space: nowrap;
+}
+.scope-management {
+  margin-left: auto;
+}
+.scope-management > span {
+  max-width: 190px;
+}
+@media (max-width: 620px) {
+  .scope-management {
+    margin-left: 0;
+  }
+  .scope-default-choice {
+    flex-wrap: wrap;
+  }
+}
+
+.activity-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  color: var(--muted);
+  font-size: 12px;
 }

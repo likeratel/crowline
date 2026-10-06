@@ -14,7 +14,7 @@ async function openBitbucket(page: Page) {
   });
   await page.goto("/?view=dashboard");
   await page.getByRole("button", { name: "설정", exact: true }).click();
-  await page.getByRole("tab", { name: "Bitbucket", exact: true }).click();
+  await page.getByLabel("서비스", { exact: true }).selectOption("bitbucket");
 }
 
 // All identities and credentials here are fictional and only used by the local preview.

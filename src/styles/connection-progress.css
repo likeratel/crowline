@@ -1,0 +1,128 @@
+.connection-progress {
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--canvas);
+}
+.connection-progress h3 {
+  margin-bottom: var(--space-2);
+  font-size: 12px;
+}
+.connection-progress ol {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.connection-progress-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+  min-width: 0;
+  color: var(--muted);
+}
+.connection-progress-mark {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  min-height: 16px;
+  color: #d5b986;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+.connection-progress-row.complete .connection-progress-mark {
+  color: #97b4a5;
+}
+.connection-progress-row.warning .connection-progress-mark {
+  color: #c68383;
+}
+.connection-progress-row.checking .connection-progress-mark {
+  color: var(--focus);
+}
+.connection-progress-row strong,
+.connection-progress-row > div > p {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.connection-progress-row strong {
+  color: var(--text);
+  font-size: 12px;
+}
+.connection-progress-row p {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.connection-progress-detail {
+  display: none;
+}
+.connection-progress-row .text-button {
+  grid-column: 2;
+  justify-self: start;
+  margin-top: 2px;
+  min-height: auto;
+}
+@media (max-width: 480px) {
+  .connection-progress ol {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 380px) {
+  .connection-progress {
+    padding: var(--space-2);
+  }
+  .connection-progress ol {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-height: 560px) and (min-width: 601px) {
+  .connection-progress {
+    margin-block: var(--space-2);
+    padding-block: var(--space-2);
+  }
+  .connection-progress h3 {
+    display: none;
+  }
+  .connection-progress-row > div > p {
+    display: none;
+  }
+  .connection-progress-row strong {
+    display: inline;
+  }
+  .connection-progress-detail {
+    display: inline-block;
+    position: relative;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+  }
+  .connection-progress-detail summary {
+    display: block;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1;
+    list-style: none;
+  }
+  .connection-progress-detail summary::-webkit-details-marker {
+    display: none;
+  }
+  .connection-progress-detail[open] p {
+    position: absolute;
+    z-index: 2;
+    width: min(220px, calc(100vw - var(--space-8)));
+    margin: var(--space-2) 0 0;
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-compact);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+}

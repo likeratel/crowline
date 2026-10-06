@@ -25,6 +25,11 @@ export const ko = {
   "common.moreCount": "나머지 {count}개 보기",
   "common.unknownActor": "실행자 미확인",
   "boot.checking": "연결 상태를 확인하고 있습니다…",
+  "settingsRecovery.title": "설정을 불러오지 못했습니다",
+  "settingsRecovery.locked": "저장 잠김",
+  "settingsRecovery.body":
+    "원본 설정은 보존했습니다. 설정 파일과 폴더의 읽기·쓰기 권한을 복구하거나 백업을 복원한 뒤 앱을 다시 시작해 주세요.",
+  "settingsRecovery.details": "오류 상세",
   "nav.monitoring": "모니터링",
   "nav.serviceFilter": "서비스 필터",
   "nav.allServices": "전체 서비스",
@@ -55,7 +60,7 @@ export const ko = {
   "dashboard.unknownActors": "실행자 미확인 {count}건은 전체에서 확인",
   "dashboard.guideTitle": "표시 기준 안내",
   "dashboard.guideHistory":
-    "진행 중은 시작 후 24시간 이내 항목, 최근 종료는 선택한 기간의 결과입니다. 더 오래된 결과는 ‘이전 배포 더 보기’에서 대상별로 불러옵니다.",
+    "진행 중은 마지막으로 확인한 실행 상태이며, 24시간을 넘겨도 종료가 확인될 때까지 유지됩니다. 최근 종료는 선택한 기간의 결과입니다. 더 오래된 결과는 ‘이전 배포 더 보기’에서 대상별로 불러옵니다.",
   "dashboard.guideSettings":
     "‘상태바 표시 설정’은 트레이에 보일 항목만 바꾸고, ‘연결 및 설정’은 대시보드가 감시할 계정과 대상을 바꿉니다.",
   "dashboard.pending":
@@ -64,10 +69,10 @@ export const ko = {
   "dashboard.onboardingTitle": "첫 번째 연결을 추가해 보세요",
   "dashboard.ready": "준비되었습니다",
   "dashboard.onboardingBody":
-    "이 기기의 GitHub·Vercel CLI 로그인과 AWS 프로필을 사용해 진행 중인 실행과 최근 배포를 모아 보여드립니다.",
+    "이 기기에서 서비스 API와 로컬 CLI를 사용해 진행 중인 실행과 최근 배포를 모아 보여드립니다.",
   "dashboard.connectService": "서비스 연결하기",
   "dashboard.onboardingSteps":
-    "연결 확인 → 대상 선택 → 저장 순서로 시작할 수 있어요.",
+    "계정을 연결하고 프로젝트를 선택하면 바로 모니터링을 시작합니다.",
   "dashboard.activeEmpty": "현재 조건에 해당하는 진행 중인 실행이 없습니다.",
   "dashboard.completedEmpty": "현재 조건에 해당하는 최근 실행이 없습니다.",
   "dashboard.needsAttention": "상태 확인 필요",
@@ -110,14 +115,15 @@ export const ko = {
   "accountPicker.addProfile": "프로필 연결 추가",
   "accountPicker.addAccount": "계정 연결 추가",
   "accountPicker.loginHelp":
-    "추가한 계정은 아래 로그인 버튼으로 연결합니다. 기존 CLI 계정은 바뀌지 않습니다.",
+    "추가한 계정은 아래 인증 방법으로 연결합니다. 토큰은 이 기기의 보안 저장소에 보관합니다.",
   "tray.summary": "배포 요약",
   "tray.close": "패널 닫기",
   "tray.preview": "미리보기 · 가상 데이터",
   "tray.scope": "{scope} · {visible}/{total}개 대상",
   "tray.mine": "내 실행",
   "tray.all": "전체 실행",
-  "tray.checkScope": "표시 범위 확인",
+  "tray.checkScope": "대시보드에서 확인",
+  "tray.moreInDashboard": "대시보드에서 {count}개 더 보기",
   "tray.pending": "최근 결과부터 표시 중 · {count}개 대상의 진행 상태 확인 중",
   "tray.issues": "조회 알림 {count}개 · 일부 정보가 늦을 수 있습니다",
   "tray.checkConnection": "연결 상태를 확인해 주세요.",
@@ -130,8 +136,7 @@ export const ko = {
     "표시할 대상이 모두 제외되어 있습니다. 대시보드의 상태바 표시 설정을 확인하세요.",
   "tray.noResults":
     "현재 실행자·대상·기간 조건에 맞는 결과가 없습니다. 대시보드에서 표시 범위와 조회 알림을 확인하세요.",
-  "tray.activeEmpty":
-    "현재 표시 범위에서 24시간 이내 시작한 진행 중 실행이 없습니다.",
+  "tray.activeEmpty": "현재 표시 범위에 진행 중인 실행이 없습니다.",
   "tray.completedEmpty":
     "선택한 기간과 표시 범위에 해당하는 최근 종료가 없습니다.",
   "tray.sectionsHidden": "표시할 섹션은 대시보드에서 설정할 수 있습니다.",
@@ -202,8 +207,9 @@ export const ko = {
   "status.canceled": "취소",
   "status.skipped": "건너뜀",
   "status.unknown": "상태 미확인",
-  "platform.github": "이 기기의 GitHub CLI 로그인을 사용합니다.",
-  "platform.vercel": "이 기기의 Vercel CLI 로그인을 사용합니다.",
+  "platform.github": "설치된 GitHub CLI의 로그인 계정을 선택해 사용합니다.",
+  "platform.vercel":
+    "설치된 Vercel CLI를 사용하며 추가 계정은 별도 로그인으로 연결합니다.",
   "platform.aws": "선택한 AWS 프로필과 리전을 사용합니다.",
   "platform.cliSession": "이 기기에 로그인된 {provider} CLI 세션을 사용합니다.",
   "platform.existingSession": "이 기기의 기존 CLI 세션을 사용합니다.",

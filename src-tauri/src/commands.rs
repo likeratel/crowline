@@ -40,6 +40,11 @@ pub async fn refresh(app: AppHandle, state: State<'_, AppState>) -> Result<Snaps
 }
 
 #[tauri::command]
+pub fn request_refresh(state: State<'_, AppState>) {
+    state.request_refresh();
+}
+
+#[tauri::command]
 pub async fn discover(
     state: State<'_, AppState>,
     provider: Provider,
@@ -109,6 +114,28 @@ pub async fn connect_bitbucket(
 }
 
 #[tauri::command]
+pub async fn get_github_cli_accounts(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    state
+        .tools
+        .github_accounts()
+        .await
+        .map_err(|error| error.user_message("GitHub"))
+}
+
+#[tauri::command]
+pub async fn connect_github_cli_account(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: Provider,
+    connection_id: String,
+    username: String,
+) -> Result<Account, String> {
+    state
+        .connect_github_cli_account(provider, &connection_id, &username, &app)
+        .await
+}
+
+#[tauri::command]
 pub async fn remove_connection(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -124,6 +151,7 @@ pub async fn begin_login(
     connection_id: String,
     profile: Option<String>,
 ) -> Result<LoginStatus, String> {
+    login::validate_provider(provider)?;
     validate_optional("AWS profile", profile.as_deref())?;
     login::begin(&app, provider, connection_id, profile).await
 }
@@ -175,6 +203,23 @@ pub(crate) fn validate_external_url(value: &str) -> Result<(), String> {
     let url = url::Url::parse(value).map_err(|_| "The link is invalid.".to_owned())?;
     if url.scheme() != "https" || url.username() != "" || url.password().is_some() {
         return Err("Only secure provider links can be opened.".into());
+    }
+    const INSTALL_GUIDES: &[&str] = &[
+        "https://cli.github.com/",
+        "https://vercel.com/docs/cli",
+        "https://docs.railway.com/guides/cli",
+        "https://docs.netlify.com/cli/get-started/",
+        "https://render.com/docs/cli",
+        "https://devcenter.heroku.com/articles/heroku-cli",
+        "https://fly.io/docs/flyctl/install/",
+        "https://docs.gitlab.com/cli/",
+        "https://docs.digitalocean.com/reference/doctl/how-to/install/",
+        "https://cloud.google.com/sdk/docs/install",
+        "https://learn.microsoft.com/cli/azure/install-azure-cli",
+        "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html",
+    ];
+    if INSTALL_GUIDES.contains(&value) {
+        return Ok(());
     }
     if url.host_str() == Some("id.atlassian.com") {
         if url.path() == "/manage-profile/security/api-tokens"
@@ -248,6 +293,10 @@ mod tests {
         )
         .is_ok());
         assert!(validate_external_url("http://github.com/acme/rocket").is_err());
+        assert!(validate_external_url("https://cli.github.com/").is_ok());
+        assert!(validate_external_url("https://vercel.com/docs/cli").is_ok());
+        assert!(validate_external_url("https://cli.github.com.evil.example/").is_err());
+        assert!(validate_external_url("https://vercel.com.evil.example/docs/cli").is_err());
         assert!(validate_external_url("https://device.sso.evil.amazonaws.com.example/").is_err());
         assert!(validate_external_url("https://github.com.evil.example/steal").is_err());
         assert!(validate_external_url("https://user:password@github.com/acme").is_err());

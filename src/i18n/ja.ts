@@ -27,6 +27,11 @@ export const ja = {
   "common.moreCount": "残り{count}件を表示",
   "common.unknownActor": "実行者不明",
   "boot.checking": "接続状態を確認しています…",
+  "settingsRecovery.title": "設定を読み込めませんでした",
+  "settingsRecovery.locked": "保存はロック中",
+  "settingsRecovery.body":
+    "元の設定は保持されています。設定ファイルとフォルダーの読み書き権限を復旧するか、バックアップを復元してからアプリを再起動してください。",
+  "settingsRecovery.details": "エラー詳細",
   "nav.monitoring": "モニタリング",
   "nav.serviceFilter": "サービスフィルター",
   "nav.allServices": "すべてのサービス",
@@ -58,7 +63,7 @@ export const ja = {
   "dashboard.unknownActors": "実行者不明の{count}件を「すべての実行」で確認",
   "dashboard.guideTitle": "表示基準について",
   "dashboard.guideHistory":
-    "実行中には開始から24時間以内の項目、最近完了には選択期間内の結果が表示されます。それ以前の結果は対象ごとに「以前のデプロイをさらに表示」から読み込めます。",
+    "実行中の項目は最後に確認した状態を表示し、24時間を超えても完了が確認されるまで残ります。最近完了には選択期間内の結果が表示されます。それ以前の結果は対象ごとに「以前のデプロイをさらに表示」から読み込めます。",
   "dashboard.guideSettings":
     "「メニューバー表示設定」ではトレイに表示する項目を変更し、「接続設定」ではダッシュボードで監視するアカウントと対象を変更します。",
   "dashboard.pending":
@@ -67,9 +72,10 @@ export const ja = {
   "dashboard.onboardingTitle": "最初の接続を追加しましょう",
   "dashboard.ready": "準備ができました",
   "dashboard.onboardingBody":
-    "このデバイスのGitHub・Vercel CLIログインとAWSプロファイルを使い、実行中のジョブと最近のデプロイをまとめて表示します。",
+    "この端末のサービスAPIとローカルCLIを使い、実行中のジョブと最近のデプロイをまとめて表示します。",
   "dashboard.connectService": "サービスを接続",
-  "dashboard.onboardingSteps": "接続確認 → 対象選択 → 保存の順に設定できます。",
+  "dashboard.onboardingSteps":
+    "アカウントを接続してプロジェクトを選ぶと、すぐに監視が始まります。",
   "dashboard.activeEmpty": "現在の条件に一致する実行中の項目はありません。",
   "dashboard.completedEmpty": "現在の条件に一致する最近の実行はありません。",
   "dashboard.needsAttention": "確認が必要",
@@ -112,14 +118,15 @@ export const ja = {
   "accountPicker.addProfile": "プロファイル接続を追加",
   "accountPicker.addAccount": "アカウント接続を追加",
   "accountPicker.loginHelp":
-    "追加したアカウントは下のログインボタンから接続します。既存のCLI既定アカウントは変更されません。",
+    "以下の認証方法でアカウントを接続します。トークンはこの端末の安全な認証情報ストアに保存されます。",
   "tray.summary": "デプロイ概要",
   "tray.close": "パネルを閉じる",
   "tray.preview": "プレビュー · サンプルデータ",
   "tray.scope": "{scope} · {visible}/{total}件",
   "tray.mine": "自分の実行",
   "tray.all": "すべての実行",
-  "tray.checkScope": "表示範囲を確認",
+  "tray.checkScope": "ダッシュボードで確認",
+  "tray.moreInDashboard": "残り{count}件をダッシュボードで表示",
   "tray.pending": "新しい結果から表示中 · {count}件の対象を確認中",
   "tray.issues": "確認事項{count}件 · 一部の情報が遅れる場合があります",
   "tray.checkConnection": "接続状態を確認してください。",
@@ -132,8 +139,7 @@ export const ja = {
     "すべての対象が非表示になっています。ダッシュボードのメニューバー表示設定を確認してください。",
   "tray.noResults":
     "実行者・対象・期間の条件に一致する結果がありません。ダッシュボードで表示範囲と確認事項を確認してください。",
-  "tray.activeEmpty":
-    "現在の表示範囲には、過去24時間以内に開始した実行中の項目がありません。",
+  "tray.activeEmpty": "現在の表示範囲には実行中の項目がありません。",
   "tray.completedEmpty":
     "選択した期間と表示範囲に一致する最近の完了項目はありません。",
   "tray.sectionsHidden": "表示するセクションはダッシュボードで設定できます。",
@@ -206,8 +212,10 @@ export const ja = {
   "status.canceled": "キャンセル済み",
   "status.skipped": "スキップ",
   "status.unknown": "状態不明",
-  "platform.github": "このデバイスのGitHub CLIログインを使用します。",
-  "platform.vercel": "このデバイスのVercel CLIログインを使用します。",
+  "platform.github":
+    "インストール済み GitHub CLI のログインアカウントを選択します。",
+  "platform.vercel":
+    "インストール済み Vercel CLI を使い、追加アカウントは個別にログインします。",
   "platform.aws": "選択したAWSプロファイルとリージョンを使用します。",
   "platform.cliSession":
     "このデバイスでログイン済みの{provider} CLIセッションを使用します。",

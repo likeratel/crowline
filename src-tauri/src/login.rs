@@ -20,6 +20,7 @@ pub async fn begin(
     connection_id: String,
     profile: Option<String>,
 ) -> Result<LoginStatus, String> {
+    validate_provider(provider)?;
     let state = app.state::<AppState>();
     let status = LoginStatus {
         connection_id: connection_id.clone(),
@@ -61,7 +62,7 @@ pub async fn begin(
 
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        let final_status = run_login(
+        let mut final_status = run_login(
             app_handle.clone(),
             provider,
             connection_id.clone(),
@@ -70,6 +71,14 @@ pub async fn begin(
         )
         .await;
         let state = app_handle.state::<AppState>();
+        if provider == Provider::Vercel && final_status.state == LoginState::Complete {
+            if let Err(message) = state
+                .finalize_vercel_cli_account(&connection_id, &app_handle)
+                .await
+            {
+                final_status = login_error(provider, &connection_id, &message);
+            }
+        }
         state
             .publish_login_status_if_account_exists(&connection_id, provider, final_status)
             .await;
@@ -120,16 +129,6 @@ async fn run_login(
     };
     let profile_arg = profile.unwrap_or_default();
     let args: Vec<&str> = match provider {
-        Provider::Github | Provider::GithubDeployments => vec![
-            "auth",
-            "login",
-            "--web",
-            "--hostname",
-            "github.com",
-            "--git-protocol",
-            "https",
-            "--skip-ssh-key",
-        ],
         Provider::Vercel => vec!["login", "--non-interactive"],
         Provider::Aws => vec![
             "sso",
@@ -195,6 +194,14 @@ async fn run_login(
             &connection_id,
             "Sign-in timed out. Try again or sign in with the CLI directly.",
         ),
+    }
+}
+
+pub(crate) fn validate_provider(provider: Provider) -> Result<(), String> {
+    if matches!(provider, Provider::Vercel | Provider::Aws) {
+        Ok(())
+    } else {
+        Err("Sign in with this provider's official CLI outside crowline, then connect the existing session.".into())
     }
 }
 
@@ -383,11 +390,20 @@ mod tests {
             label: "AWS".into(),
             mode: crate::models::AccountMode::Local,
             profile: Some("engineering".into()),
+            cli_username: None,
         };
         assert_eq!(
             login_profile(&aws, None).expect("use bound profile"),
             Some("engineering".into())
         );
         assert!(login_profile(&aws, Some("production".into())).is_err());
+    }
+
+    #[test]
+    fn in_app_login_rejects_github_before_starting_a_process() {
+        assert!(validate_provider(Provider::Github).is_err());
+        assert!(validate_provider(Provider::GithubDeployments).is_err());
+        assert!(validate_provider(Provider::Vercel).is_ok());
+        assert!(validate_provider(Provider::Aws).is_ok());
     }
 }

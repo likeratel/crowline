@@ -33,11 +33,13 @@ test("settings has one sidebar entry, keyboard tabs, and persists changes while 
   await page.keyboard.press("ArrowRight");
   await expect(tab(page, "알림")).toBeFocused();
   const notifications = panel(page, "알림");
-  await notifications.getByLabel("배포 알림 받기", { exact: true }).check();
+  await notifications
+    .getByLabel("실행 결과 알림 받기", { exact: true })
+    .check();
   await tab(page, "일반").click();
   await tab(page, "알림").click();
   await expect(
-    notifications.getByLabel("배포 알림 받기", { exact: true }),
+    notifications.getByLabel("실행 결과 알림 받기", { exact: true }),
   ).toBeChecked();
   await page.getByRole("button", { name: /^전체 서비스/ }).click();
   await expect(
@@ -45,7 +47,7 @@ test("settings has one sidebar entry, keyboard tabs, and persists changes while 
   ).toBeVisible();
   await settings(page).click();
   await expect(
-    panel(page, "알림").getByLabel("배포 알림 받기", { exact: true }),
+    panel(page, "알림").getByLabel("실행 결과 알림 받기", { exact: true }),
   ).toBeChecked();
 });
 
@@ -68,7 +70,7 @@ test("long settings use page scroll without a save action in a short viewport", 
   ).toBe(true);
 });
 
-test("account aliases default to service identity and persist after debounce without blur", async ({
+test("account aliases require explicit save and show successful persistence", async ({
   page,
 }) => {
   await exposePreviewBridge(page);
@@ -81,6 +83,11 @@ test("account aliases default to service identity and persist after debounce wit
   await connections.getByRole("button", { name: "별칭 편집" }).click();
   const alias = connections.getByLabel("계정 별칭");
   await alias.fill("개인 배포");
+  await expect(accounts).not.toContainText("개인 배포");
+  await connections.getByRole("button", { name: "별칭 저장" }).click();
+  await expect(
+    connections.getByRole("status").filter({ hasText: "저장됨" }),
+  ).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(async () => {
@@ -186,13 +193,15 @@ test("changing one settings section does not overwrite another preference", asyn
   await settings(page).click();
   await tab(page, "알림").click();
   const notifications = panel(page, "알림");
-  await notifications.getByLabel("배포 알림 받기", { exact: true }).check();
+  await notifications
+    .getByLabel("실행 결과 알림 받기", { exact: true })
+    .check();
   await tab(page, "메뉴 막대").click();
   const menuBar = panel(page, "메뉴 막대");
   await menuBar.getByLabel("최근 종료 표시", { exact: true }).uncheck();
   await tab(page, "알림").click();
   await expect(
-    notifications.getByLabel("배포 알림 받기", { exact: true }),
+    notifications.getByLabel("실행 결과 알림 받기", { exact: true }),
   ).toBeChecked();
   await tab(page, "메뉴 막대").click();
   await expect(
@@ -228,7 +237,7 @@ test("English settings tabs and recovery links open Connections from General", a
   await expect(tab(page, "General")).toBeVisible();
   await page.getByRole("button", { name: /^All services/ }).click();
   const health = page.locator(".service-health");
-  await health.locator(":scope > summary").click();
+  await expect(health).toHaveAttribute("open", "");
   await health.getByRole("button", { name: "Open connections" }).click();
   await expect(
     panel(page, "Connections").locator(".connections-settings"),
@@ -256,7 +265,7 @@ test("service diagnostics distinguish sign-in problems and include a recovery ac
   await settings(page).click();
   await tab(page, "일반").click();
   await page.getByRole("button", { name: /^전체 서비스/ }).click();
-  await page.getByText("서비스 연결 상태", { exact: true }).click();
+  await expect(page.locator(".service-health")).toHaveAttribute("open", "");
   await expect(page.locator(".service-health")).toContainText("로그인 필요");
   await page
     .locator(".service-health")
@@ -335,7 +344,7 @@ test("pending notification changes merge with an unrelated external snapshot fie
   await page.getByRole("button", { name: "설정", exact: true }).click();
   await page.getByRole("tab", { name: "알림", exact: true }).click();
   await expect(
-    page.getByLabel("배포 알림 받기", { exact: true }),
+    page.getByLabel("실행 결과 알림 받기", { exact: true }),
   ).not.toBeChecked();
   const project = page
     .locator(".notification-row")
@@ -384,7 +393,7 @@ test("pending notification changes merge with an unrelated external snapshot fie
     project.getByRole("combobox", { name: /알림 결과/ }),
   ).toHaveValue("all");
   await expect(
-    page.getByLabel("배포 알림 받기", { exact: true }),
+    page.getByLabel("실행 결과 알림 받기", { exact: true }),
   ).toBeChecked();
   await expect
     .poll(() =>

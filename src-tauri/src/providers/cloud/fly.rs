@@ -23,7 +23,30 @@ struct App {
     #[serde(alias = "Name")]
     name: String,
     #[serde(default, alias = "Organization")]
-    organization: Option<String>,
+    organization: Option<AppOrganization>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AppOrganization {
+    Label(String),
+    Details {
+        #[serde(default, alias = "Slug")]
+        slug: Option<String>,
+        #[serde(default, alias = "Name")]
+        name: Option<String>,
+    },
+}
+
+impl AppOrganization {
+    fn label(self) -> Option<String> {
+        match self {
+            Self::Label(value) => (!value.trim().is_empty()).then_some(value),
+            Self::Details { slug, name } => slug
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| name.filter(|value| !value.trim().is_empty())),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -158,6 +181,7 @@ fn app_target(app: App, connection_id: &str) -> Result<Target, CliError> {
         name: app.name.clone(),
         description: app
             .organization
+            .and_then(AppOrganization::label)
             .map(|organization| format!("Fly.io organization: {organization}")),
         metadata: HashMap::from([("app".into(), app.name)]),
     })
@@ -276,6 +300,20 @@ mod tests {
         assert_eq!(page.activities[0].status, ActivityStatus::Success);
         assert_eq!(page.activities[0].ownership, Ownership::Unknown);
         assert!(page.activities[0].url.starts_with("https://fly.io/"));
+    }
+
+    #[test]
+    fn parses_current_apps_json_with_nested_organization() {
+        let apps: Vec<App> = serde_json::from_str(
+            r#"[{"ID":"example-app","Name":"example-app","Organization":{"ID":"org-1","Name":"Example Org","Slug":"example-org"}}]"#,
+        )
+        .expect("fixture");
+        let target =
+            app_target(apps.into_iter().next().expect("app"), "fly:local").expect("target");
+        assert_eq!(
+            target.description.as_deref(),
+            Some("Fly.io organization: example-org")
+        );
     }
 
     #[test]

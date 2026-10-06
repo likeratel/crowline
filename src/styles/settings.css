@@ -4,6 +4,12 @@
 .settings-page [hidden] {
   display: none !important;
 }
+.settings-lock-surface {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
 .settings-tabs {
   position: sticky;
   top: 0;
@@ -17,6 +23,7 @@
   padding-bottom: var(--space-3);
 }
 .settings-tabs button {
+  height: var(--control-height);
   min-height: var(--control-height);
   padding: 0 var(--space-4);
   border: 1px solid transparent;
@@ -25,6 +32,7 @@
   background: transparent;
   font-size: 13px;
   cursor: pointer;
+  white-space: nowrap;
 }
 .settings-tabs button[aria-selected="true"] {
   color: var(--text);

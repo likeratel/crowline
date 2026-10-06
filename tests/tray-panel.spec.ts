@@ -89,7 +89,7 @@ test("connection controls remain usable in a narrow dashboard", async ({
   await page.getByRole("button", { name: "설정", exact: true }).click();
   const connections = page.getByRole("tabpanel", { name: "서비스 연결" });
   await expect(connections.locator(".connections-settings")).toBeVisible();
-  await connections.getByRole("tab", { name: "AWS", exact: true }).click();
+  await connections.getByLabel("서비스", { exact: true }).selectOption("aws");
   await expect(
     page.getByRole("textbox", { name: "프로필", exact: true }),
   ).toHaveValue("development");
@@ -131,15 +131,15 @@ test("adds a separate account without inheriting another account's selected targ
   await expect(page.locator(".activity-row")).toHaveCount(0);
 });
 
-test("keeps login feedback per account and preserves other selections on removal", async ({
+test("clears CLI account selection per connection and preserves other targets on removal", async ({
   page,
 }) => {
   await page.goto("/?view=dashboard");
   await page.getByRole("button", { name: "설정", exact: true }).click();
   const connections = page.getByRole("tabpanel", { name: "서비스 연결" });
-  await connections.getByRole("button", { name: "브라우저로 로그인" }).click();
-  const feedback = page.getByText("데스크톱 앱에서 사용할 수 있습니다.");
-  await expect(feedback).toBeVisible();
+  await connections.locator(".authentication-details > summary").click();
+  const tokenInput = connections.getByLabel("GitHub CLI 계정", { exact: true });
+  await tokenInput.selectOption("orbit-developer");
   await connections
     .getByRole("button", { name: "계정 추가", exact: true })
     .click();
@@ -149,12 +149,15 @@ test("keeps login feedback per account and preserves other selections on removal
   await connections
     .getByRole("button", { name: "계정 연결 추가", exact: true })
     .click();
-  await expect(feedback).not.toBeVisible();
+  await expect(tokenInput).toHaveValue("");
   await connections.getByRole("button", { name: "연결 및 대상 확인" }).click();
   await connections.locator(".target-option input").check();
-  await connections.getByRole("button", { name: "브라우저로 로그인" }).click();
+  await connections
+    .locator(".authentication-details:not([open]) > summary")
+    .click();
+  await tokenInput.selectOption("orbit-work");
   await connections.getByLabel("연결할 계정").selectOption("github:local");
-  await expect(feedback).toBeVisible();
+  await expect(tokenInput).toHaveValue("");
   await expect(connections.locator(".target-option input")).toBeChecked();
   await connections.getByLabel("연결할 계정").selectOption({ label: "회사" });
   await connections.getByRole("button", { name: "이 계정 연결 제거" }).click();
@@ -312,15 +315,17 @@ test("summary rows show loaded platform logos alongside their status", async ({
       "src",
       /^\/providers\/(github|vercel|aws)\.svg$/,
     );
-    expect(
-      await provider
-        .locator("img")
-        .evaluate(
-          (image) =>
-            (image as HTMLImageElement).complete &&
-            (image as HTMLImageElement).naturalWidth > 0,
-        ),
-    ).toBe(true);
+    await expect
+      .poll(() =>
+        provider
+          .locator("img")
+          .evaluate(
+            (image) =>
+              (image as HTMLImageElement).complete &&
+              (image as HTMLImageElement).naturalWidth > 0,
+          ),
+      )
+      .toBe(true);
     await expect(row.locator(".run-symbol")).toBeVisible();
     await expect(row.locator(".run-symbol")).toHaveAttribute("width", "16");
     await expect(row.locator(".panel-provider .run-symbol")).toHaveCount(0);

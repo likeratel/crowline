@@ -75,10 +75,10 @@ const text = {
     "设置已保存。",
   ],
   exclusions: [
-    "상태 미확인과 조회 오류는 따로 표시합니다. Vercel BLOCKED와 시작한 지 24시간이 지난 진행·대기 항목은 제외합니다.",
-    "Unknown states and retrieval errors stay visible. Vercel BLOCKED and active runs older than 24 hours are excluded.",
-    "状態不明と取得エラーは別途表示します。Vercel BLOCKEDと開始から24時間を超えた実行中・待機中の項目は除外します。",
-    "状态未知和查询错误会单独显示。Vercel BLOCKED 及开始超过24小时的进行中或等待中的运行将被排除。",
+    "상태 미확인과 조회 오류는 따로 표시합니다. 오래 진행 중인 실행도 마지막 확인 상태와 함께 유지합니다. Vercel BLOCKED는 제외합니다.",
+    "Unknown states and retrieval errors stay visible. Long-running items retain their last observed state. Vercel BLOCKED is excluded.",
+    "状態不明と取得エラーは別途表示します。長時間実行中の項目も最後に確認した状態で残ります。Vercel BLOCKEDは除外します。",
+    "状态未知和查询错误会单独显示。长时间运行的项目保留最后一次观察到的状态。Vercel BLOCKED 将被排除。",
   ],
 } as const;
 export const panelCopy = (locale: FeatureLocale, key: keyof typeof text) =>

@@ -37,17 +37,14 @@ crowline은 배포와 CI 실행 상태를 확인하는 메뉴 막대·시스템 
 
 ## 개발 환경에서 실행
 
-Node.js 22.23.3 이상, pnpm 10, Rust stable이 필요합니다. 격리 GitHub helper 빌드에는 Go 1.26.8도 필요합니다(패키지 앱 사용자는 불필요). macOS에는 Xcode Command Line Tools, Windows에는 Microsoft C++ Build Tools와 WebView2 등 [Tauri 필수 도구](https://v2.tauri.app/start/prerequisites/)를 준비합니다.
+Node.js 22.23.3 이상, pnpm 10, Rust stable이 필요합니다. macOS에는 Xcode Command Line Tools, Windows에는 Microsoft C++ Build Tools와 WebView2 등 [Tauri 필수 도구](https://v2.tauri.app/start/prerequisites/)를 준비합니다.
 
 ```sh
 git clone https://github.com/likeratel/crowline.git
 cd crowline
 pnpm install --frozen-lockfile
-pnpm tools:prepare
 pnpm tauri dev
 ```
-
-`tools:prepare`는 고정된 GitHub CLI·Node.js·Vercel CLI를 내려받고 체크섬으로 검증한 원본에서 격리 helper를 빌드합니다. 인터넷과 수백 MB 공간이 필요하며 전역 설치는 하지 않습니다.
 
 ## 빌드
 
@@ -59,29 +56,31 @@ pnpm desktop:build
 
 ## 계정과 대상 연결
 
-**설정 → 서비스 연결**에서 서비스를 고르고 계정을 연결한 뒤 모니터링할 프로젝트를 선택합니다. 설정은 바꾸는 즉시 적용됩니다. 계정 선택 옆 연필 버튼으로 별칭을 수정할 수 있습니다. 검색 결과를 한 번에 전체 선택하거나 해제할 수 있으며, 검색에 가려진 항목과 다른 계정의 선택은 유지됩니다.
+**설정 → 서비스 연결**에서 서비스를 고르고 계정을 연결한 뒤 모니터링할 프로젝트를 선택합니다. 설정은 바꾸는 즉시 적용됩니다. 계정 선택 옆 **별칭 편집**에서 이름을 입력하고 **별칭 저장**을 누르면 저장 완료가 표시됩니다. **취소** 또는 Esc로 미저장 변경을 버립니다. 검색 결과를 한 번에 전체 선택하거나 해제할 수 있으며, 검색에 가려진 항목과 다른 계정의 선택은 유지됩니다.
 
-GitHub와 Vercel은 기존 CLI 로그인 정보를 사용하거나 브라우저 로그인으로 계정을 추가할 수 있습니다. 패키지 앱에는 두 서비스의 CLI가 포함됩니다. AWS는 기존 프로필과 선택한 리전을 사용하며, SSO 로그인을 시작할 때 AWS CLI가 필요합니다. 나머지 CLI 연동은 해당 서비스의 공식 CLI 설치와 로그인이 필요합니다.
+화면 표시 범위는 **앱 기본값 → 서비스 → 프로젝트** 순으로 적용하며 프로젝트 설정이 우선합니다. 서비스 연결에서 서비스·프로젝트별 **내 실행 / 전체 실행**을 선택하면 대시보드·이력·메뉴 막대에 함께 적용됩니다. 알림 규칙은 별도입니다. 새로 선택한 프로젝트는 **내 실행 · 모든 결과** 알림 규칙이 켜진 상태로 추가하며, 기존 규칙과 전체 알림 토글 값은 바꾸지 않습니다. 알림 토글을 끄면 프로젝트 규칙을 보존한 채 전송만 중지합니다. 전체 선택 버튼은 선택 상태에 따라 전체 해제로 바뀌며 현재 검색 결과에만 적용합니다. [서비스 검증 근거](docs/provider-verification.md)는 명령 계약 테스트와 실계정 조회를 구분합니다.
 
-추가 CLI 계정을 제거하면 모니터링 설정만 삭제하며 로그아웃하지는 않습니다. Bitbucket 계정을 제거하면 앱이 보관한 해당 인증 정보도 삭제합니다.
+GitHub는 설치된 `gh` CLI를 사용합니다. `gh auth login`으로 로그인한 뒤 연결마다 CLI 사용자 계정을 선택하세요. Vercel은 설치된 `vercel` CLI를 사용하고 추가 계정의 CLI 설정을 분리합니다. Crowline OAuth 등록이나 GitHub·Vercel 토큰 입력은 필요 없습니다. AWS는 공유 프로필을, 나머지 CLI 지원 서비스는 기존 로그인 세션을 재사용합니다.
+
+기존 연결 ID·대상 선택·별칭·알림 규칙은 유지합니다. API 방식으로 연결했던 GitHub는 같은 CLI 사용자로 다시 연결하고, Vercel은 해당 CLI 설정으로 다시 로그인하세요. Bitbucket은 토큰 인증을 유지합니다. 자세한 내용은 [인증과 서비스 접근](docs/authentication.md)을 참고하세요.
 
 ## 지원 범위
 
-대부분의 서비스는 공식 CLI에 로그인한 뒤 앱을 재시작하면 연결할 수 있습니다. Bitbucket Cloud는 API 토큰으로 직접 연결합니다. 배포 hook이나 프로젝트 코드 수정은 필요 없습니다.
+crowline은 설치된 공식 CLI를 우선 사용하며, AWS SDK 공유 프로필과 Bitbucket API 토큰 연결을 유지합니다. 서비스 실행 파일이나 Node 런타임을 동봉하지 않으며 배포 hook이나 프로젝트 코드 수정이 필요 없습니다.
 
-| 플랫폼 | 조회 | 제한 |
-| --- | --- | --- |
-| GitHub Actions | 워크플로 실행 | 기존 `gh`, 최근 목록과 진행 상태 별도 조회 |
-| Vercel | 프로젝트 배포 | 기존 `vercel`, `BLOCKED` 제외 |
-| AWS | CloudFormation, ECS, Amplify | 선택 profile/리전, 실행자 미확인 |
-| GitHub Deployments | 배포 기록·최신 상태 | Actions와 별개, 상태 상세 최대 20건 |
-| Railway, Netlify, Render | 배포 이력 | 공식 CLI와 서비스별 최근 목록 제한 |
-| Heroku, Fly.io | 앱 릴리스 | Fly는 머신 상태가 아닌 릴리스 상태 |
-| GitLab.com | 배포·CI 파이프라인 | self-managed, 실행자 판정 미지원 |
-| Bitbucket Cloud | 저장소별 Pipelines | 이메일·API 토큰 인증, 최근 이력·진행 상태 조회, 실행자 구분. Data Center 미지원 |
-| DigitalOcean, Google Cloud, Azure | 배포·Cloud Build/Run·Kudu | CLI별 범위·출력·페이지 제한 |
+| 플랫폼                            | 조회                         | 제한                                                                            |
+| --------------------------------- | ---------------------------- | ------------------------------------------------------------------------------- |
+| GitHub Actions                    | 워크플로 실행                | 설치된 gh, 연결별 CLI 사용자 선택, 최근 목록과 진행 상태 별도 조회 |
+| Vercel                            | 프로젝트 배포                | 설치된 vercel, 추가 계정별 설정 분리, `BLOCKED` 제외 |
+| AWS                               | CloudFormation, ECS, Amplify | 선택 profile/리전, 실행자 미확인                                                |
+| GitHub Deployments                | 배포 기록·최신 상태          | Actions와 별개, 상태 상세 최대 20건                                             |
+| Railway, Netlify, Render          | 배포 이력                    | 설치된 공식 CLI와 서비스별 최근 목록 제한                                       |
+| Heroku, Fly.io                    | 앱 릴리스                    | Fly는 머신 상태가 아닌 릴리스 상태                                              |
+| GitLab.com                        | 배포·CI 파이프라인           | self-managed, 실행자 판정 미지원                                                |
+| Bitbucket Cloud                   | 저장소별 Pipelines           | 이메일·API 토큰 인증, 최근 이력·진행 상태 조회, 실행자 구분. Data Center 미지원 |
+| DigitalOcean, Google Cloud, Azure | 배포·Cloud Build/Run·Kudu    | CLI별 범위·출력·페이지 제한                                                     |
 
-EAS/Expo, fastlane, Cloudflare Pages/Workers, Firebase, Supabase는 카탈로그에서 제약만 안내하며 직접 조회를 지원하지 않습니다. 현재 CLI/API로 계정 전체 대상 탐색 또는 신뢰할 수 있는 배포 이력을 얻을 수 없기 때문입니다. CI 작업은 가능한 경우 GitHub Actions나 GitLab 파이프라인으로 감시합니다. [모바일 플랫폼 조사](docs/mobile-provider-notes.md)를 참고하세요. 새 어댑터는 합성 fixture와 명령 계약으로 검증했으며 실계정 로그인 검증은 아닙니다.
+EAS/Expo, fastlane, Cloudflare Pages/Workers, Firebase, Supabase는 카탈로그에서 제약만 안내하며 직접 조회를 지원하지 않습니다. 로컬 CLI 확인은 지원 불가 사유를 표시할 수 있으나, crowline은 불완전한 서비스 데이터를 실행 활동으로 추정하지 않습니다. CI 작업은 가능한 경우 GitHub Actions나 GitLab 파이프라인으로 감시합니다. [서비스 결정표](docs/authentication.md#provider-decision-matrix)와 [모바일 플랫폼 조사](docs/mobile-provider-notes.md)를 참고하세요. 새 어댑터는 합성 fixture와 명령 계약으로 검증했으며 실계정 로그인 검증은 아닙니다.
 
 ### Bitbucket Cloud
 
@@ -93,32 +92,41 @@ EAS/Expo, fastlane, Cloudflare Pages/Workers, Firebase, Supabase는 카탈로그
 
 ## 패널, 알림, 상태
 
-- **메뉴 막대 패널:** 플랫폼 아이콘, 상태, 브랜치, 실행자를 표시합니다. GitHub 워크플로, Vercel 배포, Bitbucket 커스텀 파이프라인, GitLab 파이프라인·작업, Cloud Build 트리거 이름도 제공되는 경우 함께 표시합니다. 같은 이름은 한 번만 표시하며 바깥 클릭이나 `Esc`로 닫습니다.
-- **대시보드:** 서비스·계정·**내 실행만 / 전체 실행**으로 필터링하고 이력을 검색합니다. 서비스가 지원하면 이전 이력을 더 불러올 수 있습니다. 실행자 미확인 항목은 **전체 실행**에서 확인합니다. 표시 필터와 알림 규칙은 별개입니다.
+실행 행의 X를 누르면 그 건만 숨깁니다. 새로고침·재실행 뒤에도 유지하며 실행 취소로 복원할 수 있습니다. 새 실행은 계속 표시하고, 숨긴 건은 트레이 집계와 이후 알림에서도 제외합니다.
+
+- **메뉴 막대 패널:** 플랫폼 아이콘, 상태, 브랜치, 실행자와 대상별 조회 상태 요약을 표시합니다. GitHub 워크플로, Vercel 배포, Bitbucket 커스텀 파이프라인, GitLab 파이프라인·작업, Cloud Build 트리거 이름도 제공되는 경우 함께 표시합니다. 같은 이름은 한 번만 표시하며 바깥 클릭이나 `Esc`로 닫습니다.
+- **대시보드:** 서비스·계정·**내 실행만 / 전체 실행**·화면 안의 실행 상태로 필터링하고 이력을 검색합니다. 서비스가 지원하면 이전 이력을 더 불러올 수 있습니다. 실행자 미확인 항목은 **전체 실행**에서 확인합니다. 상태 필터는 저장된 표시 범위나 알림 규칙을 바꾸지 않습니다. 실행 상세에서 수집된 맥락, 서비스가 전달한 실행 갱신 시각과 대상 조회 상태를 확인할 수 있습니다.
 - **알림:** 프로젝트별로 **끔 / 내 실행 / 전체 실행**을 고르고 **모든 결과 / 성공만 / 실패만 / 직접 설정**을 선택합니다. 알림에는 서비스, 결과, 실행 이름·제목, 프로젝트, 브랜치, 실행자를 포함합니다. 긴 내용은 OS 배너에서 잘릴 수 있습니다. 앱을 켠 직후의 과거 결과는 알리지 않습니다.
 - **메뉴 막대 설정:** 표시할 서비스·프로젝트와 영역별 1~10개 행을 선택합니다. 실행은 항상 최신순입니다. macOS에서 다른 앱 아이콘 사이의 위치는 Command 키를 누른 채 까마귀 아이콘을 드래그해 바꿉니다.
 - **일반:** 언어, 로그인 시 실행, 업데이트 확인, 앱 버전을 관리합니다.
 
-24시간을 넘긴 진행 항목과 Vercel `BLOCKED`는 숨깁니다. 완료 이력은 최근 24시간 또는 7일로 조회합니다. crowline은 조회 전용으로 배포·재실행·취소·인프라 변경을 하지 않습니다.
+진행 항목은 24시간이 지나도 마지막 관측 상태와 함께 표시하며, 이것이 실패를 뜻하지는 않습니다. Vercel `BLOCKED`는 숨깁니다. 완료 이력은 최근 24시간 또는 7일로 조회합니다. crowline은 조회 전용으로 배포·재실행·취소·인프라 변경을 하지 않습니다.
 
 ## 업데이트, 데이터, 한계
 
-실행 중인 작업이 있으면 약 30초, 없으면 약 120초마다 조회하며 오류가 나면 간격을 늘립니다. 시간 초과, 일부 조회 실패, 서비스별 페이지 제한은 화면에 표시합니다. 늦게 조회된 결과는 알림에서 빠질 수 있으므로 전체 기록은 해당 서비스에서 확인하세요.
+실행 중인 작업이 있으면 약 30초, 없으면 약 120초마다 조회하며 오류가 나면 간격을 늘립니다. 앱은 모니터링 대상별 조회 상태와 최신성을 표시하며, 서비스가 전달한 실행 갱신 시각은 로컬 조회 시각과 다릅니다. 화면 복귀나 네트워크 복구 시 오래되거나 불완전한 결과는 합쳐진 재조회 요청을 보낼 수 있습니다. 시간 초과, 일부 조회 실패, 서비스별 페이지 제한은 화면에 표시합니다. 늦게 조회된 결과는 알림에서 빠질 수 있으므로 전체 기록은 해당 서비스에서 확인하세요.
 
-설정은 OS 앱 데이터 폴더의 `io.crowline.desktop/settings.json`에 보관합니다. GitHub/Vercel은 CLI 인증 정보, AWS는 프로필을 사용합니다. Bitbucket 인증 정보는 OS 보안 저장소에 보관하며, 설치 파일에는 사용자 계정 정보가 들어가지 않습니다.
+설정과 숨긴 실행 기록은 OS 앱 데이터 디렉터리의 `io.crowline.desktop/settings.json`에 저장합니다. Bitbucket 토큰은 OS 보안 저장소에 보관합니다. GitHub 계정별 토큰은 gh를 통해 해당 조회 프로세스에서만 사용하며 Crowline이 저장하지 않습니다. 인증 정보나 서비스 실행 파일은 설치 파일에 포함하지 않습니다.
+
+설정 파일을 읽거나 변환한 내용을 저장하지 못하면 원본 보존을 위해 설정·계정 변경을 잠그고 복구 안내를 표시합니다. 유효한 백업 파일이나 폴더 권한을 복구한 뒤 앱을 재시작하세요. 읽을 수 있는 설정과 모니터링 결과는 계속 표시합니다.
 
 현재 빌드는 자동 업데이트가 설정되어 있지 않습니다. 저장소는 비공개이며 저장소의 릴리스 주소를 공개 업데이트 경로로 사용할 수 없습니다. 배포·업데이트 설정은 [릴리스 문서](docs/releases.md)를 참고하세요.
+
+최신 CLI 우선 다중 계정 변경은 합성 데이터 테스트로 검증합니다. 모든 CLI 버전의 실제 로그인과 Windows 실행은 아직 미검증입니다.
 
 로컬 검증 범위는 macOS Apple Silicon 빌드·실행, GitHub/Vercel 패널 데이터, Bitbucket 파이프라인 조회, 가상 데이터를 사용한 자동 테스트입니다. Windows 실행, 실제 AWS 연결, 추가 계정 브라우저 로그인, 최신 시스템 알림 배너 수신은 미검증입니다. 의존성 관련 확인 사항은 날짜가 명시된 [보안 검토](docs/security-review.md)에 기록되어 있습니다.
 
 릴리스·플랫폼 조사·이미지 제작·과거 리뷰는 [문서 목록](docs/README.md)에서 확인할 수 있습니다.
+
+[2026-10-04 제품 QA 기록](docs/qa-2026-10-04.md)에 전체 선택 성능, 화면 검증, 독립 리뷰와 출시 전 남은 조건을 정리했습니다. 전체 선택은 설정 저장 직후 조작할 수 있고 조회는 백그라운드에서 진행합니다. 선택 해제는 원격 조회를 실행하지 않습니다. 로컬 빌드 성공을 모든 서비스·운영체제의 실동작 검증으로 간주하지 않습니다.
+
+[2026-10-06 제품 개선·UX 검증 기록](docs/qa-2026-10-06.md)에 조회 최신성, 실행 상세, 연결 동선과 상태바 동작 수정을 정리했습니다. 자동 검사와 네이티브 실동작 검증의 한계를 구분합니다.
 
 ## 개발 확인
 
 ```sh
 pnpm check
 pnpm test
-pnpm test:tools
 pnpm exec playwright install chromium
 pnpm test:e2e
 pnpm build
@@ -132,4 +140,4 @@ cargo clippy --all-targets -- -D warnings
 
 ## 라이선스
 
-crowline은 [MIT License](LICENSE)로 제공합니다. helper 도구 버전·라이선스는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)에, 패키지 고지는 `tools/`에 있습니다. 까마귀 아이콘 출처는 [브랜드 노트](docs/brand.md)에 기록했습니다.
+crowline은 [MIT License](LICENSE)로 제공합니다. 현재 패키지와 로고 고지는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)에 있습니다. 까마귀 아이콘 출처는 [브랜드 노트](docs/brand.md)에 기록했습니다.

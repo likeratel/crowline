@@ -1,4 +1,11 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Search } from "lucide-react";
 import { accountDisplayName } from "../accountNames";
 import { errorMessage, isPreview } from "../bridge";
@@ -17,6 +24,8 @@ import type { SettingsChange } from "../settingsChanges";
 import { useSettingsChanges } from "../settingsChangesContext";
 import { ProviderIcon } from "./ProviderIcon";
 import { SettingFeedback } from "./SettingFeedback";
+import { Switch } from "./Switch";
+import { uxCopy } from "../uxCopy";
 import "../styles/notifications.css";
 
 type Props = {
@@ -33,6 +42,10 @@ type NotificationRulePatch = Extract<
   { kind: "notificationRules" }
 >["rules"][number];
 type NotificationRuleFields = Omit<NotificationRulePatch, "targetKey">;
+type PermissionProblem = {
+  operation: "check" | "request";
+  details: string;
+};
 
 const OUTCOMES: readonly Outcome[] = ["success", "failed", "canceled"];
 const defaultRule = (key: string): NotificationRule => ({
@@ -81,8 +94,13 @@ export function NotificationPreferences({
     null,
   );
   const [status, setStatus] = useState<DesktopStatus | null>(null);
+  const [permissionChecking, setPermissionChecking] = useState(true);
   const [permissionWorking, setPermissionWorking] = useState(false);
-  const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [permissionProblem, setPermissionProblem] =
+    useState<PermissionProblem | null>(null);
+  const mounted = useRef(false);
+  const statusCheck = useRef<Promise<void> | null>(null);
+  const permissionRequest = useRef<Promise<void> | null>(null);
 
   const availableKeys = useMemo(
     () => new Set(settings.targets.map((target) => targetKey(target))),
@@ -95,20 +113,38 @@ export function NotificationPreferences({
     );
     setCustomModes((current) => retainKnownKeys(current, availableKeys));
   }, [availableKeys]);
-  useEffect(() => {
-    let active = true;
-    void desktop
+  const checkPermissionStatus = useCallback(() => {
+    if (statusCheck.current) return statusCheck.current;
+    setPermissionChecking(true);
+    setPermissionProblem(null);
+    const operation = desktop
       .status()
       .then((value) => {
-        if (active) setStatus(value);
+        if (!mounted.current) return;
+        setStatus(value);
       })
       .catch((cause) => {
-        if (active) setPermissionError(errorMessage(cause));
+        if (!mounted.current) return;
+        setStatus(null);
+        setPermissionProblem({
+          operation: "check",
+          details: errorMessage(cause),
+        });
+      })
+      .finally(() => {
+        if (statusCheck.current === operation) statusCheck.current = null;
+        if (mounted.current) setPermissionChecking(false);
       });
-    return () => {
-      active = false;
-    };
+    statusCheck.current = operation;
+    return operation;
   }, []);
+  useEffect(() => {
+    mounted.current = true;
+    void checkPermissionStatus();
+    return () => {
+      mounted.current = false;
+    };
+  }, [checkPermissionStatus]);
 
   const ruleFor = (key: string): NotificationRule =>
     settings.preferences.notifications.rules.find(
@@ -190,70 +226,131 @@ export function NotificationPreferences({
     });
     patchRule(key, { statuses: presetStatuses(preset) });
   };
-  const requestPermission = async () => {
+  const requestPermission = () => {
+    if (permissionRequest.current) return permissionRequest.current;
     setPermissionWorking(true);
-    setPermissionError(null);
-    try {
-      const permission = await desktop.permission();
-      setStatus((current) =>
-        current ? { ...current, notificationPermission: permission } : current,
-      );
-    } catch (cause) {
-      setPermissionError(errorMessage(cause));
-    } finally {
-      setPermissionWorking(false);
-    }
+    setPermissionProblem(null);
+    const operation = desktop
+      .permission()
+      .then((permission) => {
+        if (!mounted.current) return;
+        setStatus((current) =>
+          current
+            ? { ...current, notificationPermission: permission }
+            : current,
+        );
+      })
+      .catch((cause) => {
+        if (!mounted.current) return;
+        setPermissionProblem({
+          operation: "request",
+          details: errorMessage(cause),
+        });
+      })
+      .finally(() => {
+        if (permissionRequest.current === operation)
+          permissionRequest.current = null;
+        if (mounted.current) setPermissionWorking(false);
+      });
+    permissionRequest.current = operation;
+    return operation;
   };
+
+  const permissionCheckFailed = permissionProblem?.operation === "check";
 
   return (
     <section className="notification-preferences" aria-label={c("title")}>
       <div className="notification-master-row">
-        <label className="notification-master">
-          <input
-            type="checkbox"
+        <div>
+          <Switch
             checked={settings.preferences.notifications.enabled}
-            onChange={(event) =>
-              void change({
-                kind: "notificationEnabled",
-                enabled: event.currentTarget.checked,
-              })
+            onChange={(enabled) =>
+              void change({ kind: "notificationEnabled", enabled })
             }
-          />
-          {c("enabled")}
-        </label>
+          >
+            {c("enabled")}
+          </Switch>
+          <p className="field-help">{uxCopy(locale, "notificationHelp")}</p>
+        </div>
         <SettingFeedback changeKey="notificationEnabled" />
       </div>
 
       {(isPreview ||
+        permissionChecking ||
+        permissionCheckFailed ||
         !status ||
         status.notificationPermission !== "granted") && (
-        <div className="notification-permission">
-          <span>
-            {isPreview
-              ? c("desktopOnly")
-              : status
-                ? c(status.notificationPermission)
-                : c("checking")}
-          </span>
-          {!isPreview &&
+        <div
+          className="notification-permission"
+          role={
+            permissionProblem
+              ? "alert"
+              : permissionChecking
+                ? "status"
+                : undefined
+          }
+          aria-busy={permissionChecking || permissionWorking}
+        >
+          <div>
+            <span>
+              {isPreview
+                ? c("desktopOnly")
+                : permissionChecking
+                  ? c("checking")
+                  : permissionCheckFailed
+                    ? c("checkFailed")
+                    : permissionProblem?.operation === "request"
+                      ? c("requestFailed")
+                      : status
+                        ? c(status.notificationPermission)
+                        : c("checkFailed")}
+            </span>
+            {permissionProblem && !permissionChecking && (
+              <details>
+                <summary>{c("errorDetails")}</summary>
+                <p>{permissionProblem.details}</p>
+              </details>
+            )}
+          </div>
+          {!isPreview && permissionCheckFailed && !permissionChecking ? (
+            <button
+              type="button"
+              className="button"
+              disabled={permissionChecking}
+              onClick={() => void checkPermissionStatus()}
+            >
+              {c("retryCheck")}
+            </button>
+          ) : (
+            !isPreview &&
+            !permissionChecking &&
             status &&
             status.notificationPermission !== "granted" && (
               <button
-                className="text-button"
+                type="button"
+                className="button"
                 disabled={permissionWorking}
                 onClick={() => void requestPermission()}
               >
                 {c("allow")}
               </button>
-            )}
+            )
+          )}
         </div>
       )}
 
+      <div className="notification-context" role="status">
+        <p>{uxCopy(locale, "notificationDefaults")}</p>
+        {!settings.preferences.notifications.enabled && (
+          <p>{uxCopy(locale, "notificationPaused")}</p>
+        )}
+      </div>
       <div className="notification-filters">
         <label className="notification-search" htmlFor={searchId}>
           <Search size={15} aria-hidden="true" />
           <input
             id={searchId}
+            aria-label={c("search")}
             value={query}
             placeholder={c("search")}
             onChange={(event) => setQuery(event.currentTarget.value)}
@@ -471,9 +568,9 @@ export function NotificationPreferences({
           ))}
         </div>
       )}
-      {(permissionError || error) && (
+      {error && (
         <p className="notice warning" role="alert">
-          {permissionError || error}
+          {error}
         </p>
       )}
     </section>

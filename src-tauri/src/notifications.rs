@@ -5,7 +5,7 @@ use tauri::{plugin::PermissionState, AppHandle, Runtime};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::{
-    models::{Activity, ActivityStatus, Ownership, Provider, Target},
+    models::{Activity, ActivityKey, ActivityStatus, Ownership, Provider, Target},
     preferences::{resolved_language, Language, NotificationPreferences, NotificationScope},
 };
 
@@ -30,6 +30,17 @@ impl From<&Target> for TargetKey {
             connection_id: target.connection_id.clone(),
             target_id: target.id.clone(),
         }
+    }
+}
+
+impl TargetKey {
+    fn preference_key(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.provider.as_str(),
+            self.connection_id,
+            self.target_id
+        )
     }
 }
 
@@ -67,6 +78,14 @@ pub(crate) struct NotificationDelivery {
     pub notification: NativeNotification,
 }
 
+impl NotificationDelivery {
+    pub fn matches(&self, activity: &ActivityKey) -> bool {
+        self.key.target.provider == activity.provider
+            && self.key.target.target_id == activity.target_id
+            && self.key.activity_id == activity.activity_id
+    }
+}
+
 #[derive(Clone, Debug)]
 struct PendingDelivery {
     notification: NativeNotification,
@@ -88,9 +107,39 @@ pub(crate) struct NotificationEngine {
 
 impl NotificationEngine {
     pub fn sync_preferences(&mut self, preferences: &NotificationPreferences) {
-        if self.preferences.as_ref() != Some(preferences) {
-            self.reset(preferences.clone());
+        let Some(previous) = self.preferences.clone() else {
+            self.preferences = Some(preferences.clone());
+            return;
+        };
+        if previous == *preferences {
+            return;
         }
+        if previous.enabled != preferences.enabled {
+            self.reset(preferences.clone());
+            return;
+        }
+
+        let previous_rules: HashMap<_, _> = previous
+            .rules
+            .iter()
+            .map(|rule| (rule.target_key.as_str(), rule))
+            .collect();
+        let next_rules: HashMap<_, _> = preferences
+            .rules
+            .iter()
+            .map(|rule| (rule.target_key.as_str(), rule))
+            .collect();
+        let target_keys: HashSet<_> = previous_rules
+            .keys()
+            .chain(next_rules.keys())
+            .copied()
+            .collect();
+        for target_key in target_keys {
+            if previous_rules.get(target_key) != next_rules.get(target_key) {
+                self.reset_target(target_key);
+            }
+        }
+        self.preferences = Some(preferences.clone());
     }
 
     pub fn observe(
@@ -228,6 +277,23 @@ impl NotificationEngine {
         self.delivered_order.clear();
         self.pending.clear();
         self.pending_order.clear();
+    }
+
+    fn reset_target(&mut self, preference_key: &str) {
+        self.baselines
+            .retain(|target, _| target.preference_key() != preference_key);
+        self.baseline_order
+            .retain(|target| target.preference_key() != preference_key);
+        self.observation_order
+            .retain(|(target, _)| target.preference_key() != preference_key);
+        self.delivered
+            .retain(|delivery| delivery.target.preference_key() != preference_key);
+        self.delivered_order
+            .retain(|delivery| delivery.target.preference_key() != preference_key);
+        self.pending
+            .retain(|delivery, _| delivery.target.preference_key() != preference_key);
+        self.pending_order
+            .retain(|delivery| delivery.target.preference_key() != preference_key);
     }
 
     fn insert_baseline(&mut self, key: TargetKey, generation: u64, observed_at: DateTime<Utc>) {
@@ -378,18 +444,18 @@ fn localize(activity: &Activity, language: Language) -> NativeNotification {
     let status = activity.status;
     let language = resolved_language(&language);
     let title = match (language, status) {
-        (Language::Korean, ActivityStatus::Success) => "배포 성공",
-        (Language::Korean, ActivityStatus::Failed) => "배포 실패",
-        (Language::Korean, ActivityStatus::Canceled) => "배포 취소",
-        (Language::Japanese, ActivityStatus::Success) => "デプロイ成功",
-        (Language::Japanese, ActivityStatus::Failed) => "デプロイ失敗",
-        (Language::Japanese, ActivityStatus::Canceled) => "デプロイ中止",
-        (Language::SimplifiedChinese, ActivityStatus::Success) => "部署成功",
-        (Language::SimplifiedChinese, ActivityStatus::Failed) => "部署失败",
-        (Language::SimplifiedChinese, ActivityStatus::Canceled) => "部署已取消",
-        (_, ActivityStatus::Success) => "Deployment succeeded",
-        (_, ActivityStatus::Failed) => "Deployment failed",
-        (_, ActivityStatus::Canceled) => "Deployment canceled",
+        (Language::Korean, ActivityStatus::Success) => "실행 성공",
+        (Language::Korean, ActivityStatus::Failed) => "실행 실패",
+        (Language::Korean, ActivityStatus::Canceled) => "실행 취소",
+        (Language::Japanese, ActivityStatus::Success) => "実行成功",
+        (Language::Japanese, ActivityStatus::Failed) => "実行失敗",
+        (Language::Japanese, ActivityStatus::Canceled) => "実行キャンセル",
+        (Language::SimplifiedChinese, ActivityStatus::Success) => "运行成功",
+        (Language::SimplifiedChinese, ActivityStatus::Failed) => "运行失败",
+        (Language::SimplifiedChinese, ActivityStatus::Canceled) => "运行已取消",
+        (_, ActivityStatus::Success) => "Run succeeded",
+        (_, ActivityStatus::Failed) => "Run failed",
+        (_, ActivityStatus::Canceled) => "Run canceled",
         _ => unreachable!("only notifiable statuses are localized"),
     };
     NativeNotification {

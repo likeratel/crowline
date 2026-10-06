@@ -8,6 +8,9 @@ pub mod heroku;
 
 mod support;
 
+#[cfg(all(test, unix))]
+mod provider_integration_tests;
+
 use crate::{
     cli::{CliError, CliInvocation},
     models::{Account, ActivityPage, Connection, Discovery, Provider, Target},

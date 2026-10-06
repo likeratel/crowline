@@ -1,32 +1,44 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, ArrowUpRight, LoaderCircle, Search } from "lucide-react";
 import { bridge, errorMessage } from "../bridge";
 import {
-  PROVIDERS,
   PROVIDER_NAMES,
   targetKey,
   type Account,
   type Discovery,
+  type Connection,
   type LoginStatus,
   type Provider,
   type Snapshot,
-  type Target,
 } from "../domain";
-import { ProviderIcon } from "./ProviderIcon";
+import { ServiceSelector } from "./ServiceSelector";
 import { AccountPicker } from "./AccountPicker";
 import { getPlatformDetails } from "../platformDetails";
-import { useSettingsChanges } from "../settingsChangesContext";
-import { SettingFeedback } from "./SettingFeedback";
 import { accountDisplayName } from "../accountNames";
 import { useI18n } from "../i18n";
 import { settingsCopy } from "../settingsCopy";
-import { targetsChangedByBulkSelection } from "./connectionTargets";
+import { isGithubProvider } from "../cliAccounts";
+import { GithubCliConnect } from "./GithubCliConnect";
+import { LocalCliHelp } from "./LocalCliHelp";
+import { ProjectSelection } from "./ProjectSelection";
+import { useSettingsChanges } from "../settingsChangesContext";
+import {
+  ConnectionProgress,
+  type ConnectionProgressAction,
+} from "./ConnectionProgress";
+import { copy } from "../featureCopy";
+import { uxCopy } from "../uxCopy";
+import "../styles/connection-progress.css";
 interface Props {
   snapshot: Snapshot;
   saving?: boolean;
   onBusyChange?: (busy: boolean) => void;
   onRefresh: () => Promise<void>;
   onReload?: () => Promise<void>;
+  requestedProvider?: Provider;
+  requestedConnectionId?: string;
+  connectionRequest?: number;
+  onNotifications?: () => void;
 }
 export function Connections({
   snapshot,
@@ -34,48 +46,53 @@ export function Connections({
   onBusyChange,
   onRefresh,
   onReload,
+  requestedProvider,
+  requestedConnectionId,
+  connectionRequest,
+  onNotifications,
 }: Props) {
   const { locale, t } = useI18n();
-  const { change, failures, pendingKeys } = useSettingsChanges();
+  const { pendingKeys } = useSettingsChanges();
   const [provider, setProvider] = useState<Provider>("github");
   const [connectionId, setConnectionId] = useState(
     snapshot.settings.accounts.find((account) => account.provider === "github")
       ?.id ?? "",
   );
   const [awsProfiles, setAwsProfiles] = useState<string[]>([]);
-  const [results, setResults] = useState<Partial<Record<string, Discovery>>>(
-    {},
-  );
-  const selected = snapshot.settings.targets;
+  const [results, setResults] = useState<
+    Partial<Record<string, Discovery & { previousConnection: string }>>
+  >({});
   const [knownTargets, setKnownTargets] = useState(snapshot.settings.targets);
   useEffect(() => {
     setKnownTargets((previous) => {
-      const retained = previous.filter((target) =>
-        snapshot.settings.accounts.some(
-          (account) => account.id === target.connectionId,
-        ),
+      const accountIds = new Set(
+        snapshot.settings.accounts.map((account) => account.id),
       );
-      return [
-        ...retained.filter(
-          (target) =>
-            !snapshot.settings.targets.some(
-              (item) => targetKey(item) === targetKey(target),
-            ),
-        ),
-        ...snapshot.settings.targets,
-      ];
+      const targetMap = new Map(
+        snapshot.settings.targets.map((target) => [targetKey(target), target]),
+      );
+      const retained = previous.filter(
+        (target) =>
+          accountIds.has(target.connectionId) &&
+          !targetMap.has(targetKey(target)),
+      );
+      const next = [...retained, ...targetMap.values()];
+      return next.length === previous.length &&
+        next.every((target, index) => target === previous[index])
+        ? previous
+        : next;
     });
   }, [snapshot.settings.targets, snapshot.settings.accounts]);
+  const [discoveryErrors, setDiscoveryErrors] = useState<
+    Record<string, string>
+  >({});
   const [region, setRegion] = useState("ap-northeast-2");
-  const [search, setSearch] = useState("");
-  const [providerSearch, setProviderSearch] = useState("");
   const [busy, setBusy] = useState(false);
-  const [bulkSaving, setBulkSaving] = useState(false);
-  const bulkSavePending = useRef(false);
-  const working = busy || saving || bulkSaving;
+  const [cliBusy, setCliBusy] = useState(false);
+  const working = busy || saving || cliBusy;
   useEffect(() => {
-    onBusyChange?.(busy);
-  }, [busy, onBusyChange]);
+    onBusyChange?.(busy || cliBusy);
+  }, [busy, cliBusy, onBusyChange]);
   const [error, setError] = useState<string | null>(null);
   const [pendingBitbucket, setPendingBitbucket] = useState<Account | null>(
     null,
@@ -86,7 +103,6 @@ export function Connections({
   const login = logins[connectionId];
   const details = getPlatformDetails(provider, locale);
   const reload = onReload ?? onRefresh;
-  const dialog = useRef<HTMLElement>(null);
   useEffect(() => {
     if (login?.state !== "waiting") return;
     let active = true;
@@ -121,7 +137,6 @@ export function Connections({
   const account = accounts.find((item) => item.id === connectionId);
   const selectAccount = (value: Account) => {
     setConnectionId(value.id);
-    setSearch("");
     setError(null);
   };
   const discoverConnection = async (
@@ -129,14 +144,37 @@ export function Connections({
     nextConnectionId: string,
     profile: string | null,
   ) => {
-    const found = await bridge.discover(
-      nextProvider,
-      nextConnectionId,
-      nextProvider === "aws" ? profile : null,
-      nextProvider === "aws" ? region || null : null,
-    );
-    setResults((previous) => ({ ...previous, [nextConnectionId]: found }));
-    if (nextProvider === "aws") setAwsProfiles(found.awsProfiles);
+    try {
+      const found = await bridge.discover(
+        nextProvider,
+        nextConnectionId,
+        nextProvider === "aws" ? profile : null,
+        nextProvider === "aws" ? region || null : null,
+      );
+      setResults((previous) => ({
+        ...previous,
+        [nextConnectionId]: {
+          ...found,
+          previousConnection: JSON.stringify(
+            snapshot.connections.find(
+              (item) => item.connectionId === nextConnectionId,
+            ),
+          ),
+        },
+      }));
+      setDiscoveryErrors((previous) =>
+        Object.fromEntries(
+          Object.entries(previous).filter(([id]) => id !== nextConnectionId),
+        ),
+      );
+      if (nextProvider === "aws") setAwsProfiles(found.awsProfiles);
+    } catch (cause) {
+      setDiscoveryErrors((previous) => ({
+        ...previous,
+        [nextConnectionId]: errorMessage(cause),
+      }));
+      throw cause;
+    }
   };
   const createAccount = async (label: string, profile: string | null) => {
     setBusy(true);
@@ -279,7 +317,7 @@ export function Connections({
       const status = await bridge.login(
         provider,
         connectionId,
-        account?.profile ?? null,
+        provider === "aws" ? (account?.profile ?? null) : null,
       );
       setLogins((previous) => ({ ...previous, [connectionId]: status }));
     } catch (cause) {
@@ -288,93 +326,44 @@ export function Connections({
       setBusy(false);
     }
   };
-  const toggle = (target: Target) => {
-    void change({
-      kind: "target",
-      target,
-      selected: !selected.some((item) => targetKey(item) === targetKey(target)),
-    }).then((saved) => {
-      if (saved) void onRefresh();
-    });
-  };
   const result = results[connectionId];
-  const connection =
-    result?.connection ??
-    snapshot.connections.find((item) => item.connectionId === connectionId);
-  const mergedTargets = [
-    ...(result?.targets ?? []),
-    ...knownTargets.filter(
-      (target) =>
-        target.connectionId === connectionId &&
-        !result?.targets.some((item) => targetKey(item) === targetKey(target)),
-    ),
-  ];
-  const uniqueTargets = mergedTargets.filter(
-    (target, index, all) =>
-      all.findIndex((item) => targetKey(item) === targetKey(target)) === index,
+  const snapshotConnection = snapshot.connections.find(
+    (item) => item.connectionId === connectionId,
   );
-  const targets = uniqueTargets.filter((target) =>
-    `${target.name} ${target.description ?? ""}`
-      .toLowerCase()
-      .includes(search.toLowerCase()),
+  const newerSnapshot =
+    result && JSON.stringify(snapshotConnection) !== result.previousConnection;
+  const connection: Connection | undefined = newerSnapshot
+    ? snapshotConnection
+    : (result?.connection ?? snapshotConnection);
+  const discoveryError = discoveryErrors[connectionId];
+  const connected = connection?.status === "connected";
+  const statusLabel = discoveryError
+    ? uxCopy(locale, "verificationFailed")
+    : copy(
+        locale,
+        connected
+          ? "connected"
+          : connection?.status === "signed-out"
+            ? "signedOut"
+            : connection?.status === "missing-cli"
+              ? "missingCli"
+              : connection?.status === "error"
+                ? "connectionError"
+                : "notChecked",
+      );
+  const uniqueTargets = useMemo(
+    () => [
+      ...new Map(
+        [
+          ...knownTargets.filter(
+            (target) => target.connectionId === connectionId,
+          ),
+          ...(result?.targets ?? []),
+        ].map((target) => [targetKey(target), target]),
+      ).values(),
+    ],
+    [knownTargets, connectionId, result],
   );
-  const selectedTargetKeys = new Set(selected.map(targetKey));
-  const allVisibleSelected =
-    targets.length > 0 &&
-    targets.every((target) => selectedTargetKeys.has(targetKey(target)));
-  const anyVisibleSelected = targets.some((target) =>
-    selectedTargetKeys.has(targetKey(target)),
-  );
-  const currentTargetPrefix = `${provider}:${connectionId}:`;
-  const bulkFeedbackKeys = [
-    ...pendingKeys.filter(
-      (key) =>
-        key.startsWith(`targets:${currentTargetPrefix}`) ||
-        key.includes(`|${currentTargetPrefix}`),
-    ),
-    ...Object.entries(failures).flatMap(([key, failure]) =>
-      failure.change.kind === "targets" &&
-      failure.change.targets.every(
-        (target) =>
-          target.provider === provider && target.connectionId === connectionId,
-      )
-        ? [key]
-        : [],
-    ),
-  ].filter((key, index, all) => all.indexOf(key) === index);
-  const setVisibleTargetsSelected = async (shouldSelect: boolean) => {
-    if (bulkSavePending.current || targets.length === 0) return;
-    const changedTargets = targetsChangedByBulkSelection(
-      targets,
-      selectedTargetKeys,
-      shouldSelect,
-    );
-    if (changedTargets.length === 0) return;
-    bulkSavePending.current = true;
-    setBulkSaving(true);
-    setError(null);
-    try {
-      const bulkChange = {
-        kind: "targets" as const,
-        targets: changedTargets,
-        selected: shouldSelect,
-      };
-      if (await change(bulkChange)) await onRefresh();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      bulkSavePending.current = false;
-      setBulkSaving(false);
-    }
-  };
-  const catalog = PROVIDERS.filter((item) =>
-    `${PROVIDER_NAMES[item]} ${item}`
-      .toLocaleLowerCase()
-      .includes(providerSearch.trim().toLocaleLowerCase()),
-  );
-  const activeCatalogProvider = catalog.includes(provider)
-    ? provider
-    : catalog[0];
   const selectProvider = (nextProvider: Provider) => {
     setProvider(nextProvider);
     setConnectionId(
@@ -382,43 +371,81 @@ export function Connections({
         (account) => account.provider === nextProvider,
       )?.id ?? "",
     );
-    setSearch("");
     setError(null);
   };
-  const handleProviderKeyDown = (
-    event: KeyboardEvent<HTMLButtonElement>,
-    currentProvider: Provider,
-  ) => {
-    const currentIndex = catalog.indexOf(currentProvider);
-    const offsets: Partial<Record<string, number>> = {
-      ArrowRight: 1,
-      ArrowDown: 1,
-      ArrowLeft: -1,
-      ArrowUp: -1,
-    };
-    const offset = offsets[event.key];
-    let nextProvider: Provider | undefined;
-
-    if (event.key === "Home") nextProvider = catalog[0];
-    else if (event.key === "End") nextProvider = catalog[catalog.length - 1];
-    else if (offset !== undefined && currentIndex >= 0) {
-      nextProvider =
-        catalog[(currentIndex + offset + catalog.length) % catalog.length];
+  useEffect(() => {
+    if (requestedProvider) {
+      setProvider(requestedProvider);
+      setConnectionId(
+        snapshot.settings.accounts.find(
+          (item) =>
+            item.provider === requestedProvider &&
+            (!requestedConnectionId || item.id === requestedConnectionId),
+        )?.id ?? "",
+      );
+      setError(null);
     }
-    if (!nextProvider) return;
-
-    event.preventDefault();
-    selectProvider(nextProvider);
-    window.requestAnimationFrame(() => {
-      dialog.current
-        ?.querySelector<HTMLButtonElement>(`#provider-tab-${nextProvider}`)
-        ?.focus();
-    });
-  };
+  }, [requestedProvider, requestedConnectionId, connectionRequest]);
   const canConnect = Boolean(account) && !details.unsupportedMessage;
+  const selectedTargets = snapshot.settings.targets.filter(
+    (target) =>
+      target.provider === provider && target.connectionId === connectionId,
+  );
+  const selectionPrefix = `${provider}:${connectionId}:`;
+  const selectionPending = pendingKeys.some(
+    (key) =>
+      key.startsWith(`target:${selectionPrefix}`) ||
+      key.startsWith(`targets:${selectionPrefix}`) ||
+      key.includes(`|${selectionPrefix}`),
+  );
+  const handleProgressAction = (action: ConnectionProgressAction) => {
+    if (working) return;
+    if (action === "verify") {
+      void discover();
+      return;
+    }
+    if (action === "query") {
+      void onRefresh().catch((cause: unknown) => setError(errorMessage(cause)));
+      return;
+    }
+    const sectionId =
+      action === "projects"
+        ? "connection-project-controls"
+        : action === "authentication"
+          ? "connection-authentication"
+          : "connection-account-controls";
+    const section = document.getElementById(sectionId);
+    if (action === "authentication" && section instanceof HTMLDetailsElement)
+      section.open = true;
+    const control =
+      action === "authentication"
+        ? (section?.querySelector<HTMLElement>(
+            "select:not(:disabled), input:not(:disabled), button:not(:disabled)",
+          ) ?? section?.querySelector<HTMLElement>(":scope > summary"))
+        : action === "projects"
+          ? (section?.querySelector<HTMLElement>(
+              ".target-option input:not(:disabled)",
+            ) ?? document.getElementById("connection-verify-control"))
+          : section?.querySelector<HTMLElement>(
+              "button:not(:disabled), select:not(:disabled), input:not(:disabled), summary",
+            );
+    control?.focus();
+  };
+  const progress = (
+    <ConnectionProgress
+      snapshot={snapshot}
+      provider={provider}
+      accountPresent={Boolean(account)}
+      connection={connection}
+      selectedTargets={selectedTargets}
+      selectionPending={selectionPending}
+      requiresCli={provider !== "aws" && Boolean(details.cliCommand)}
+      verificationError={discoveryError}
+      onAction={handleProgressAction}
+    />
+  );
   return (
     <section
-      ref={dialog}
       className="connections-settings"
       aria-label={t("connections.title")}
     >
@@ -427,133 +454,216 @@ export function Connections({
         tabIndex={0}
         aria-label={t("connections.content")}
       >
-        <div className="provider-catalog">
-          <label className="search-box provider-search">
-            <Search size={15} />
-            <input
-              aria-label={t("connections.searchPlatform")}
-              value={providerSearch}
-              placeholder={t("connections.searchPlatform")}
-              onChange={(event) => setProviderSearch(event.target.value)}
-            />
-          </label>
-          <div
-            className="provider-tabs"
-            role="tablist"
-            aria-label={t("connections.services")}
-          >
-            {catalog.map((item) => (
-              <button
-                id={`provider-tab-${item}`}
-                key={item}
-                role="tab"
-                aria-controls="connection-provider-panel"
-                aria-selected={provider === item}
-                tabIndex={activeCatalogProvider === item ? 0 : -1}
-                disabled={working}
-                onClick={() => selectProvider(item)}
-                onKeyDown={(event) => handleProviderKeyDown(event, item)}
-              >
-                <ProviderIcon provider={item} />
-                {PROVIDER_NAMES[item]}
-              </button>
-            ))}
-            {catalog.length === 0 && (
-              <p className="catalog-empty" role="status">
-                {t("connections.noPlatforms")}
-              </p>
-            )}
-          </div>
-        </div>
+        {!connected && (
+          <p className="section-intro">{uxCopy(locale, "connectionIntro")}</p>
+        )}
+        <ServiceSelector
+          provider={provider}
+          disabled={working}
+          onSelect={selectProvider}
+        />
         <section
           id="connection-provider-panel"
           className="connection-provider-panel"
+          tabIndex={-1}
           role="tabpanel"
           aria-label={t("connections.providerSettings", {
             provider: PROVIDER_NAMES[provider],
           })}
         >
-          {provider === "bitbucket" && pendingBitbucket ? (
-            <div className="notice warning" role="status">
-              <span>{t("bitbucket.reloadFailed")}</span>
-              <button
-                className="button"
-                disabled={working}
-                onClick={() => void retryBitbucketReload()}
-              >
-                {t("common.retry")}
-              </button>
-            </div>
-          ) : (
-            <AccountPicker
-              key={provider}
-              provider={provider}
-              accounts={accounts}
-              settings={snapshot.settings}
-              connections={snapshot.connections.map((item) =>
-                item.connectionId === connectionId && result?.connection
-                  ? result.connection
-                  : item,
-              )}
-              discoveredConnection={result?.connection}
-              selectedId={connectionId}
-              busy={working}
-              profiles={awsProfiles}
-              onSelect={selectAccount}
-              onCreate={createAccount}
-              onRemove={removeAccount}
-              onConnectBitbucket={connectBitbucket}
-              onLoadProfiles={loadProfiles}
-              savedTargetCount={
-                snapshot.settings.targets.filter(
-                  (target) => target.connectionId === connectionId,
-                ).length
-              }
-            />
+          {!connected && (
+            <header className="setup-step-heading">
+              <span aria-hidden="true">1</span>
+              <div>
+                <h2>{uxCopy(locale, "accountStep")}</h2>
+                <p>{uxCopy(locale, "accountHelp")}</p>
+              </div>
+            </header>
           )}
+          <div id="connection-account-controls">
+            {provider === "bitbucket" && pendingBitbucket ? (
+              <div className="notice warning" role="status">
+                <span>{t("bitbucket.reloadFailed")}</span>
+                <button
+                  className="button"
+                  disabled={working}
+                  onClick={() => void retryBitbucketReload()}
+                >
+                  {t("common.retry")}
+                </button>
+              </div>
+            ) : (
+              <AccountPicker
+                key={provider}
+                provider={provider}
+                accounts={accounts}
+                settings={snapshot.settings}
+                connections={snapshot.connections}
+                discoveredConnection={connection}
+                selectedId={connectionId}
+                busy={working}
+                profiles={awsProfiles}
+                onSelect={selectAccount}
+                onCreate={createAccount}
+                onRemove={removeAccount}
+                onConnectBitbucket={connectBitbucket}
+                onLoadProfiles={loadProfiles}
+                savedTargetCount={
+                  snapshot.settings.targets.filter(
+                    (target) => target.connectionId === connectionId,
+                  ).length
+                }
+              />
+            )}
+          </div>
+          {(error || discoveryError) && (
+            <div className="notice warning connection-error" role="alert">
+              <AlertCircle size={16} />
+              <span>{error || discoveryError}</span>
+            </div>
+          )}
+          {!details.unsupportedMessage &&
+            provider === "bitbucket" &&
+            !account &&
+            progress}
           {!details.unsupportedMessage &&
             (provider !== "bitbucket" || account) && (
               <>
-                <div className="connection-state" role="status">
-                  <span
-                    aria-hidden="true"
-                    className={`connection-dot ${connection?.status === "connected" ? "connected" : ""}`}
-                  />
-                  <div>
-                    <strong>
-                      {account
-                        ? accountDisplayName(
+                <div className="connection-overview">
+                  <div className="connection-state" role="status">
+                    <span
+                      aria-hidden="true"
+                      className={`connection-dot ${connected && !discoveryError ? "connected" : ""}`}
+                    />
+                    <div>
+                      <strong>
+                        <span className="connection-status-label">
+                          {statusLabel} ·{" "}
+                        </span>
+                        {account
+                          ? accountDisplayName(
+                              account,
+                              snapshot.settings,
+                              connection ? [connection] : [],
+                            )
+                          : t("connections.checkConnection")}
+                      </strong>
+                      {connection?.account &&
+                        account &&
+                        connection.account !==
+                          accountDisplayName(
                             account,
                             snapshot.settings,
                             connection ? [connection] : [],
-                          )
-                        : t("connections.checkConnection")}
-                    </strong>
-                    {connection?.status !== "connected" &&
-                      connection?.message && <p>{connection.message}</p>}
+                          ) && <p>{connection.account}</p>}
+                      {connection?.status !== "connected" &&
+                        connection?.message && <p>{connection.message}</p>}
+                    </div>
+                  </div>
+                  <div className="connection-actions">
+                    <button
+                      id="connection-verify-control"
+                      className={`button ${connected ? "" : "primary"}`}
+                      onClick={() => void discover()}
+                      disabled={working || !canConnect}
+                    >
+                      {busy ? (
+                        <LoaderCircle size={15} className="spin" />
+                      ) : (
+                        <Search size={15} />
+                      )}
+                      {t("connections.verifyTargets")}
+                    </button>
+                    {details.canStartAppLogin && (
+                      <button
+                        className="button"
+                        onClick={() => void beginLogin()}
+                        disabled={
+                          busy ||
+                          !canConnect ||
+                          (login?.connectionId === connectionId &&
+                            login.state === "waiting")
+                        }
+                      >
+                        {provider === "aws"
+                          ? t("connections.ssoLogin")
+                          : t("connections.browserLogin")}
+                        <ArrowUpRight size={14} />
+                      </button>
+                    )}
                   </div>
                 </div>
+                {progress}
+                <div id="connection-project-controls">
+                  <ProjectSelection
+                    key={connectionId}
+                    snapshot={snapshot}
+                    provider={provider}
+                    connectionId={connectionId}
+                    uniqueTargets={uniqueTargets}
+                    discovered={Boolean(result)}
+                    disabled={working}
+                    onRefresh={onRefresh}
+                    onError={(cause) => setError(errorMessage(cause))}
+                    onNotifications={onNotifications}
+                  />
+                </div>
                 {provider !== "bitbucket" && (
-                  <details className="connection-help">
-                    <summary>{settingsCopy(locale, "connectionHelp")}</summary>
-                    <p>
-                      {provider === "aws"
-                        ? account
-                          ? t("connections.awsSelected", {
-                              profile: account.profile ?? account.label,
-                              command: "aws sso login --profile <profile>",
-                            })
-                          : t("connections.awsAdd")
-                        : account?.mode === "isolated"
-                          ? t("connections.appLogin", {
-                              provider: PROVIDER_NAMES[provider],
-                            })
-                          : details.cliCommand
-                            ? t("connections.completeCli", {
-                                command: details.cliCommand,
-                              })
-                            : details.connectionSummary}
-                    </p>
+                  <details
+                    id="connection-authentication"
+                    className="authentication-details"
+                    key={`auth-${connectionId}`}
+                    open={connection?.status !== "connected"}
+                  >
+                    <summary>{uxCopy(locale, "authentication")}</summary>
+                    {isGithubProvider(provider) && account && (
+                      <GithubCliConnect
+                        key={connectionId}
+                        provider={provider}
+                        connectionId={connectionId}
+                        username={account.cliUsername}
+                        busy={busy || saving}
+                        onBusyChange={setCliBusy}
+                        onConnected={async () => {
+                          await reload();
+                          await discoverConnection(
+                            provider,
+                            connectionId,
+                            null,
+                          );
+                        }}
+                      />
+                    )}
+                    {!isGithubProvider(provider) && (
+                      <details className="connection-help">
+                        <summary>
+                          {settingsCopy(locale, "connectionHelp")}
+                        </summary>
+                        <p>
+                          {provider === "aws"
+                            ? account
+                              ? t("connections.awsSelected", {
+                                  profile: account.profile ?? account.label,
+                                  command: "aws sso login --profile <profile>",
+                                })
+                              : t("connections.awsAdd")
+                            : account?.mode === "isolated"
+                              ? t("connections.appLogin", {
+                                  provider: PROVIDER_NAMES[provider],
+                                })
+                              : details.cliCommand
+                                ? t("connections.completeCli", {
+                                    command: details.cliCommand,
+                                  })
+                                : details.connectionSummary}
+                        </p>
+                      </details>
+                    )}
+                    <LocalCliHelp
+                      key={provider}
+                      provider={provider}
+                      version={connection?.cliVersion}
+                    />
                   </details>
                 )}
                 {provider === "aws" && account && (
@@ -572,37 +682,6 @@ export function Connections({
                     </label>
                   </div>
                 )}
-                <div className="connection-actions">
-                  <button
-                    className="button primary"
-                    onClick={() => void discover()}
-                    disabled={busy || !canConnect}
-                  >
-                    {busy ? (
-                      <LoaderCircle size={15} className="spin" />
-                    ) : (
-                      <Search size={15} />
-                    )}
-                    {t("connections.verifyTargets")}
-                  </button>
-                  {details.canStartAppLogin && (
-                    <button
-                      className="button"
-                      onClick={() => void beginLogin()}
-                      disabled={
-                        busy ||
-                        !canConnect ||
-                        (login?.connectionId === connectionId &&
-                          login.state === "waiting")
-                      }
-                    >
-                      {provider === "aws"
-                        ? t("connections.ssoLogin")
-                        : t("connections.browserLogin")}
-                      <ArrowUpRight size={14} />
-                    </button>
-                  )}
-                </div>
                 {login?.connectionId === connectionId && (
                   <div
                     className={`notice ${login.state === "error" ? "warning" : ""}`}
@@ -645,97 +724,11 @@ export function Connections({
                     {issue.message}
                   </div>
                 ))}
-                <div className="target-heading">
-                  <h3>
-                    {t("connections.targets")}{" "}
-                    <span>{uniqueTargets.length}</span>
-                  </h3>
-                  <span>
-                    {t("common.selectedCount", {
-                      count: selected.filter(
-                        (target) => target.connectionId === connectionId,
-                      ).length,
-                    })}
-                  </span>
-                </div>
-                {mergedTargets.length > 0 && (
-                  <div className="target-controls">
-                    <label className="search-box target-search">
-                      <Search size={15} />
-                      <input
-                        aria-label={t("connections.searchTargets")}
-                        value={search}
-                        placeholder={t("connections.searchByName")}
-                        onChange={(event) => setSearch(event.target.value)}
-                      />
-                    </label>
-                    <div className="target-bulk-actions">
-                      <button
-                        type="button"
-                        className="text-button"
-                        disabled={
-                          working || targets.length === 0 || allVisibleSelected
-                        }
-                        onClick={() => void setVisibleTargetsSelected(true)}
-                      >
-                        {t("connections.selectAllVisible")}
-                      </button>
-                      <button
-                        type="button"
-                        className="text-button"
-                        disabled={working || !anyVisibleSelected}
-                        onClick={() => void setVisibleTargetsSelected(false)}
-                      >
-                        {t("connections.deselectAllVisible")}
-                      </button>
-                      {bulkFeedbackKeys.map((key) => (
-                        <SettingFeedback key={key} changeKey={key} />
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div className="target-list">
-                  {targets.length ? (
-                    targets.map((target) => (
-                      <label key={targetKey(target)} className="target-option">
-                        <input
-                          type="checkbox"
-                          disabled={working}
-                          checked={selected.some(
-                            (item) => targetKey(item) === targetKey(target),
-                          )}
-                          onChange={() => toggle(target)}
-                        />
-                        <div>
-                          <strong>{target.name}</strong>
-                          {target.description && (
-                            <span>{target.description}</span>
-                          )}
-                          <SettingFeedback
-                            changeKey={`target:${targetKey(target)}`}
-                          />
-                        </div>
-                      </label>
-                    ))
-                  ) : (
-                    <p className="targets-empty">
-                      {result
-                        ? t("connections.noTargets")
-                        : t("connections.verifyFirst")}
-                    </p>
-                  )}
-                </div>
                 {!details.supportsActorAttribution && (
                   <p className="field-help">{t("connections.actorHelp")}</p>
                 )}
               </>
             )}
-          {error && (
-            <div className="notice warning" role="alert">
-              <AlertCircle size={16} />
-              {error}
-            </div>
-          )}
         </section>
       </div>
     </section>

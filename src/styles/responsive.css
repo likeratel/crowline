@@ -149,6 +149,26 @@
     flex-direction: column;
   }
 }
+@media (max-width: 380px) {
+  .sidebar {
+    width: 52px;
+  }
+  .main-content {
+    padding-inline: var(--space-3);
+  }
+  .toolbar {
+    gap: var(--space-2);
+  }
+  .segmented {
+    flex: 1 1 auto;
+  }
+  .segmented button {
+    flex: 1 1 0;
+  }
+  .connections-dialog {
+    width: calc(100vw - var(--space-3));
+  }
+}
 @media (max-height: 560px) {
   .connections-dialog {
     max-height: calc(100vh - var(--space-4));
@@ -173,5 +193,37 @@
   *::after {
     animation: none !important;
     transition: none !important;
+  }
+}
+
+@media (max-height: 560px) {
+  .main-content {
+    padding-top: var(--space-4);
+  }
+  .settings-page .main-header h1 {
+    margin: 0 0 var(--space-2);
+  }
+  .connections-settings .section-intro {
+    margin-bottom: var(--space-3);
+  }
+  .service-selector {
+    padding: 0;
+    margin-bottom: var(--space-4);
+  }
+  .setup-step-heading {
+    margin-bottom: var(--space-3);
+  }
+  .connection-provider-panel > .account-picker {
+    margin-bottom: var(--space-4);
+  }
+}
+
+@media (max-height: 560px) {
+  .service-selector {
+    padding-block: 0;
+  }
+  .authentication-details,
+  .connection-state {
+    margin-bottom: var(--space-2);
   }
 }

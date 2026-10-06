@@ -143,17 +143,18 @@ export function AccountPicker({
             </select>
           </label>
           <button
-            className="icon-button"
+            className="button"
             aria-label={settingsCopy(locale, "editAlias")}
             aria-expanded={editingAlias}
             disabled={busy}
             onClick={() => setEditingAlias((value) => !value)}
           >
             <Pencil size={14} />
+            {settingsCopy(locale, "editAlias")}
           </button>
           {supportsMultipleAccounts && (
             <button
-              className="icon-button"
+              className="button"
               aria-label={t("accountPicker.add")}
               disabled={busy}
               onClick={() => {
@@ -162,6 +163,7 @@ export function AccountPicker({
               }}
             >
               <Plus size={16} />
+              {t("accountPicker.add")}
             </button>
           )}
           {selectedId !== "github:local" && selectedId !== "vercel:local" && (
