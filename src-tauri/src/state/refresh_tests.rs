@@ -1317,7 +1317,7 @@ printf '%s\n' "$*" >> "$0.calls"
 case "$*" in
   *--version*) printf 'gh version 2.90.0\n';;
   *'api user '*|*'api /user '*) sleep IDENTITY_DELAY; printf '{"id":42,"login":"synthetic-user"}';;
-  *'status='*) if [ "SLOW_ACTIVE" = true ]; then attempts=0; while [ ! -e "$0.third-recent-started" ] && [ "$attempts" -lt 100 ]; do sleep 0.02; attempts=$((attempts + 1)); done; fi; printf 'active-finished\n' >> "$0.calls"; printf '{"total_count":0,"workflow_runs":[]}';;
+  *'status='*) if [ "SLOW_ACTIVE" = true ]; then attempts=0; while [ ! -e "$0.third-recent-started" ] && [ "$attempts" -lt 500 ]; do sleep 0.02; attempts=$((attempts + 1)); done; fi; printf 'active-finished\n' >> "$0.calls"; printf '{"total_count":0,"workflow_runs":[]}';;
   *'repos/sample/failing/actions/runs?per_page=20'*) printf '{';;
   *'repos/sample/third/actions/runs?per_page=20'*) touch "$0.third-recent-started"; printf '{"total_count":0,"workflow_runs":[]}';;
   *'repos/sample/slow/actions/runs?per_page=20'*) if [ "SLOW_ACTIVE" = false ]; then sleep 0.3; fi; printf '{"total_count":0,"workflow_runs":[]}';;

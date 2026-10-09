@@ -596,7 +596,7 @@ impl Toolchain {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn github_for_test(app_data_dir: &Path, cli: CliInvocation) -> Self {
         Self {
             github: Some(cli),
