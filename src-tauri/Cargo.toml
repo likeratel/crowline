@@ -5,6 +5,7 @@ description = "Personal deployment monitoring for the menu bar and system tray"
 license = "MIT"
 repository = "https://github.com/likeratel/crowline"
 edition = "2021"
+rust-version = "1.92"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

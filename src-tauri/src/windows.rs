@@ -84,7 +84,7 @@ impl PanelFocusState {
     fn tray_press_cancelled(&self, currently_focused: bool) -> bool {
         let was_active = self
             .tray_press
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |press| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |press| {
                 matches!(
                     press,
                     TRAY_PRESS_STARTED_HIDDEN | TRAY_PRESS_STARTED_VISIBLE
