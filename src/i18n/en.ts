@@ -38,13 +38,13 @@ export const en = {
   "nav.panelPreferences": "Menu bar display",
   "nav.connections": "Connections",
   "nav.generalSettings": "Settings",
-  "nav.tagline": "Deployment monitor",
+  "nav.tagline": "Run monitor",
   "dashboard.preview":
     "Preview · Sample data. Live connections are available in the desktop app.",
   "dashboard.connectedProjects": "Connected projects",
-  "dashboard.title": "Deployment overview",
+  "dashboard.title": "Run overview",
   "dashboard.subtitle":
-    "Track runs and recent deployments for the selected account.",
+    "Track recent runs for the selected account.",
   "dashboard.active": "In progress",
   "dashboard.runs": "runs",
   "dashboard.completed": "Recently completed",
@@ -64,7 +64,7 @@ export const en = {
     "View {count} runs with unknown actors in All runs",
   "dashboard.guideTitle": "What appears here",
   "dashboard.guideHistory":
-    "In-progress items retain their last observed state beyond 24 hours until completion is confirmed. Recently completed items use the selected range. Load older results per target from ‘View earlier deployments’.",
+    "In-progress items retain their last observed state beyond 24 hours until completion is confirmed. Recently completed items use the selected range. Load older results per target from ‘View earlier runs’.",
   "dashboard.guideSettings":
     "‘Menu bar display’ controls the tray. ‘Connections’ controls the accounts and targets monitored by the dashboard.",
   "dashboard.pending":
@@ -73,7 +73,7 @@ export const en = {
   "dashboard.onboardingTitle": "Add your first connection",
   "dashboard.ready": "Ready when you are",
   "dashboard.onboardingBody":
-    "Use service APIs and local CLI sessions on this device to see active runs and recent deployments together.",
+    "Use service APIs and local CLI sessions on this device to see active and recent runs together.",
   "dashboard.connectService": "Connect a service",
   "dashboard.onboardingSteps":
     "Connect an account and select projects to start monitoring immediately.",
@@ -87,14 +87,14 @@ export const en = {
   "account.filter": "Account filter",
   "account.all": "All accounts",
   "activity.updated": "Updated {time}",
-  "history.label": "Earlier deployments",
+  "history.label": "Earlier runs",
   "history.lead": "Recent results are shown first",
   "history.help":
     "Select a target to load older history. The time range and actor filters still apply.",
   "history.target": "History target",
   "history.selectTarget": "Select a target",
   "history.loading": "Loading history…",
-  "history.loadMore": "View earlier deployments",
+  "history.loadMore": "View earlier runs",
   "history.end":
     "There is no more history for this target, or you have reached the platform's available history limit.",
   "accountPicker.defaultAccount": "{provider} account",
@@ -120,7 +120,7 @@ export const en = {
   "accountPicker.addAccount": "Add account connection",
   "accountPicker.loginHelp":
     "Connect this account using the authentication options below. Tokens stay in this device’s secure credential store.",
-  "tray.summary": "Deployment summary",
+  "tray.summary": "Run summary",
   "tray.close": "Close panel",
   "tray.preview": "Preview · Sample data",
   "tray.scope": "{scope} · {visible}/{total} targets",
@@ -181,7 +181,7 @@ export const en = {
   "connections.selectSaveHelp":
     "Select only the targets you want to monitor, then save.",
   "connections.readOnly":
-    "Crowline only reads deployment status. It cannot change deployments.",
+    "Crowline only reads run status. It cannot change remote services.",
   "connections.checkConnection": "Verify the connection",
   "connections.tokenNotNeeded":
     "Existing authentication will be used. No token entry is needed.",

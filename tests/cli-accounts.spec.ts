@@ -60,6 +60,7 @@ test("Vercel reauthentication never sends its stable identity as an AWS profile"
     });
   });
   await page.goto("/?view=dashboard");
+  await expect(page.locator(".app-shell")).toBeVisible();
   await page.evaluate(() => {
     const backend = (
       window as unknown as {

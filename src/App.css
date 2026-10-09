@@ -450,9 +450,7 @@
 .activity-title {
   font-size: 12px;
   font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 7px;
+  display: block;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }

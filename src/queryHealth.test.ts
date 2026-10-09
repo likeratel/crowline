@@ -148,9 +148,11 @@ describe("target query health", () => {
       queryStateForTarget(snapshot, base.settings.targets[1], now).state,
     ).toBe("success");
   });
-  it("requests recovery only when a failed or stale attempt is old enough", () => {
+  it("refreshes on return after twenty seconds even when the last query succeeded", () => {
     const base = fixture();
     expect(shouldRequestRefresh(base, now)).toBe(false);
+    expect(shouldRequestRefresh(base, now + 14_999)).toBe(false);
+    expect(shouldRequestRefresh(base, now + 15_000)).toBe(true);
     expect(shouldRequestRefresh(base, now + 120_000)).toBe(true);
     expect(
       shouldRequestRefresh({ ...base, refreshing: true }, now + 120_000),
@@ -171,5 +173,51 @@ describe("target query health", () => {
         now + 120_000,
       ),
     ).toBe(false);
+  });
+  it.each(["partial", "error"] as const)(
+    "keeps healthy targets responsive beside a %s target",
+    (status) => {
+      const base = fixture();
+      const mixed: Snapshot = {
+        ...base,
+        queryHealth: base.queryHealth.map((row, index) =>
+          index === 0 ? { ...row, status } : row,
+        ),
+      };
+      expect(shouldRequestRefresh(mixed, now + 14_999)).toBe(false);
+      expect(shouldRequestRefresh(mixed, now + 15_000)).toBe(true);
+      expect(shouldRequestRefresh(mixed, now, true)).toBe(true);
+      const failed: Snapshot = {
+        ...base,
+        queryHealth: base.queryHealth.map((row) => ({ ...row, status })),
+      };
+      expect(shouldRequestRefresh(failed, now + 20_000)).toBe(false);
+    },
+  );
+  it("does not let a history-page update postpone refreshing current activity", () => {
+    const base = fixture();
+    const snapshot: Snapshot = {
+      ...base,
+      lastUpdatedAt: at(0),
+      queryHealth: base.queryHealth.map((row) => ({
+        ...row,
+        lastAttemptAt: at(40),
+        lastSuccessfulAt: at(40),
+      })),
+    };
+    expect(shouldRequestRefresh(snapshot, now)).toBe(true);
+  });
+  it("uses each successful target's age when other targets finish later", () => {
+    const base = fixture();
+    const snapshot: Snapshot = {
+      ...base,
+      lastUpdatedAt: at(1),
+      queryHealth: base.queryHealth.map((row, index) =>
+        index === 0
+          ? { ...row, lastAttemptAt: at(30), lastSuccessfulAt: at(30) }
+          : { ...row, status: "partial", lastAttemptAt: at(1) },
+      ),
+    };
+    expect(shouldRequestRefresh(snapshot, now)).toBe(true);
   });
 });

@@ -30,7 +30,7 @@ test("panel refresh, execution links, close, and Escape never open the dashboard
     )
     .toBe(2);
   await expect(page).not.toHaveURL(/view=dashboard/);
-  await expect(page.getByRole("main", { name: "배포 요약" })).toBeVisible();
+  await expect(page.getByRole("main", { name: "실행 요약" })).toBeVisible();
   await page
     .getByRole("button", { name: "대시보드에서 확인", exact: true })
     .click();

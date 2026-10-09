@@ -26,13 +26,13 @@ test("history loads only on demand and settings remain usable during polling", a
   });
   await page.goto("/?view=dashboard");
   await expect(
-    page.getByRole("button", { name: "이전 배포 더 보기" }),
+    page.getByRole("button", { name: "이전 실행 더 보기" }),
   ).toBeDisabled();
   await page
     .getByLabel("이력 조회 대상")
     .selectOption("github:github:local:github:orbit/web");
   await expect(
-    page.getByRole("button", { name: "이전 배포 더 보기" }),
+    page.getByRole("button", { name: "이전 실행 더 보기" }),
   ).toBeEnabled();
   expect(
     await page.evaluate(
@@ -40,9 +40,9 @@ test("history loads only on demand and settings remain usable during polling", a
         (window as unknown as { __historyCalls?: number }).__historyCalls ?? 0,
     ),
   ).toBe(0);
-  await page.getByRole("button", { name: "이전 배포 더 보기" }).click();
+  await page.getByRole("button", { name: "이전 실행 더 보기" }).click();
   await expect(
-    page.getByRole("button", { name: "이전 배포 더 보기" }),
+    page.getByRole("button", { name: "이전 실행 더 보기" }),
   ).toBeDisabled();
   expect(
     await page.evaluate(

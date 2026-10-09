@@ -15,7 +15,7 @@ const en = {
   lastSuccess: "Last successful check",
   noSuccess: "No successful check yet",
   healthHelp:
-    "These are the last observed results. A query problem does not mean a deployment failed.",
+    "These are the last observed results. A query problem does not mean a run failed.",
   all: "All",
   active: "In progress",
   failed: "Failed",
@@ -47,7 +47,7 @@ const ko: Record<Key, string> = {
   lastSuccess: "마지막 성공 조회",
   noSuccess: "아직 성공한 조회가 없습니다",
   healthHelp:
-    "마지막으로 확인한 결과입니다. 조회 오류가 배포 실패를 의미하지는 않습니다.",
+    "마지막으로 확인한 결과입니다. 조회 오류가 실행 실패를 의미하지는 않습니다.",
   all: "전체",
   active: "진행 중",
   failed: "실패",
@@ -78,7 +78,7 @@ const ja: Record<Key, string> = {
   lastSuccess: "最終取得成功",
   noSuccess: "取得に成功していません",
   healthHelp:
-    "最後に確認した結果です。取得エラーはデプロイ失敗を意味しません。",
+    "最後に確認した結果です。取得エラーは実行の失敗を意味しません。",
   all: "すべて",
   active: "進行中",
   failed: "失敗",
@@ -107,7 +107,7 @@ const zhCN: Record<Key, string> = {
   lastAttempt: "上次查询尝试",
   lastSuccess: "上次成功查询",
   noSuccess: "尚未成功查询",
-  healthHelp: "这是上次确认的结果。查询出错并不代表部署失败。",
+  healthHelp: "这是上次确认的结果。查询出错并不代表运行失败。",
   all: "全部",
   active: "进行中",
   failed: "失败",

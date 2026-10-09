@@ -3,7 +3,7 @@ import { QueryHealthSummary } from "./QueryHealthSummary";
 import { summarizeQueryHealth } from "../queryHealth";
 import { monitorCopy } from "../monitorCopy";
 import { isLongRunning } from "../activityView";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import {
   ArrowUpRight,
   Check,
@@ -32,6 +32,7 @@ import { SettingsRecoveryNotice } from "./SettingsRecoveryNotice";
 import { activityCopy } from "../activityCopy";
 import { activityIdentity, activityKeyString } from "../domain";
 import { useMonitor } from "../useMonitor";
+import { useVisibleClock } from "../useVisibleClock";
 import {
   formatDuration,
   formatRelativeTime,
@@ -227,10 +228,9 @@ function TrayPanelContent({
     settingsLocked ? lockedSettingsChange : monitor.change,
     setError,
   );
-  const [, tick] = useState(0);
+  useVisibleClock();
   useEffect(() => {
     document.documentElement.classList.add("panel-mode");
-    const timer = window.setInterval(() => tick((value) => value + 1), 15_000);
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape")
         void bridge
@@ -240,7 +240,6 @@ function TrayPanelContent({
     window.addEventListener("keydown", onKey);
     return () => {
       document.documentElement.classList.remove("panel-mode");
-      window.clearInterval(timer);
       window.removeEventListener("keydown", onKey);
     };
   }, [setError]);

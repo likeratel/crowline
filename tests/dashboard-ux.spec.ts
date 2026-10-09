@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/?view=dashboard");
+  await expect(page.locator(".app-shell")).toBeVisible();
 });
 
 test("omits workspace placeholders and keeps connection help compact", async ({

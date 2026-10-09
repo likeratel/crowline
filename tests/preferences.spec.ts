@@ -43,7 +43,7 @@ test("settings has one sidebar entry, keyboard tabs, and persists changes while 
   ).toBeChecked();
   await page.getByRole("button", { name: /^전체 서비스/ }).click();
   await expect(
-    page.getByRole("heading", { name: "배포 현황", exact: true }),
+    page.getByRole("heading", { name: "실행 현황", exact: true }),
   ).toBeVisible();
   await settings(page).click();
   await expect(
@@ -277,9 +277,9 @@ test("service diagnostics distinguish sign-in problems and include a recovery ac
 });
 
 for (const language of [
-  { locale: "en-US", heading: "Deployment overview" },
-  { locale: "ja-JP", heading: "デプロイ状況" },
-  { locale: "zh-CN", heading: "部署概览" },
+  { locale: "en-US", heading: "Run overview" },
+  { locale: "ja-JP", heading: "実行状況" },
+  { locale: "zh-CN", heading: "运行概览" },
 ]) {
   test(`system language selects ${language.locale}`, async ({ browser }) => {
     const context = await browser.newContext({ locale: language.locale });

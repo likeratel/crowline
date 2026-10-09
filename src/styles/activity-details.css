@@ -14,9 +14,6 @@
   color: var(--text);
   background: var(--soft);
 }
-.activity-title {
-  display: block;
-}
 .activity-workflow {
   display: block;
   color: var(--muted);

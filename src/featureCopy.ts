@@ -196,10 +196,10 @@ const messages = {
   up: ["위로", "Move up", "上へ", "上移"],
   down: ["아래로", "Move down", "下へ", "下移"],
   failureFirst: [
-    "같은 우선순위에서는 실패한 배포 먼저 표시",
-    "Show failed deployments first within each priority",
-    "同じ優先順位では失敗したデプロイを先に表示",
-    "同一优先级内优先显示失败的部署",
+    "같은 우선순위에서는 실패한 실행 먼저 표시",
+    "Show failed runs first within each priority",
+    "同じ優先順位では失敗した実行を先に表示",
+    "同一优先级内优先显示失败的运行",
   ],
   issuesCount: [
     "확인 필요 {count}건",

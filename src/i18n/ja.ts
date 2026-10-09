@@ -38,13 +38,13 @@ export const ja = {
   "nav.panelPreferences": "メニューバー表示設定",
   "nav.connections": "接続設定",
   "nav.generalSettings": "一般設定",
-  "nav.tagline": "デプロイモニター",
+  "nav.tagline": "実行モニター",
   "dashboard.preview":
     "プレビュー · サンプルデータです。実際の接続はデスクトップアプリで利用できます。",
   "dashboard.connectedProjects": "接続済みプロジェクト",
-  "dashboard.title": "デプロイ状況",
+  "dashboard.title": "実行状況",
   "dashboard.subtitle":
-    "選択したアカウントの実行状況と最近のデプロイを確認できます。",
+    "選択したアカウントの最近の実行状況を確認できます。",
   "dashboard.active": "実行中",
   "dashboard.runs": "件",
   "dashboard.completed": "最近完了",
@@ -63,7 +63,7 @@ export const ja = {
   "dashboard.unknownActors": "実行者不明の{count}件を「すべての実行」で確認",
   "dashboard.guideTitle": "表示基準について",
   "dashboard.guideHistory":
-    "実行中の項目は最後に確認した状態を表示し、24時間を超えても完了が確認されるまで残ります。最近完了には選択期間内の結果が表示されます。それ以前の結果は対象ごとに「以前のデプロイをさらに表示」から読み込めます。",
+    "実行中の項目は最後に確認した状態を表示し、24時間を超えても完了が確認されるまで残ります。最近完了には選択期間内の結果が表示されます。それ以前の結果は対象ごとに「以前の実行をさらに表示」から読み込めます。",
   "dashboard.guideSettings":
     "「メニューバー表示設定」ではトレイに表示する項目を変更し、「接続設定」ではダッシュボードで監視するアカウントと対象を変更します。",
   "dashboard.pending":
@@ -72,7 +72,7 @@ export const ja = {
   "dashboard.onboardingTitle": "最初の接続を追加しましょう",
   "dashboard.ready": "準備ができました",
   "dashboard.onboardingBody":
-    "この端末のサービスAPIとローカルCLIを使い、実行中のジョブと最近のデプロイをまとめて表示します。",
+    "この端末のサービスAPIとローカルCLIを使い、実行中と最近の実行をまとめて表示します。",
   "dashboard.connectService": "サービスを接続",
   "dashboard.onboardingSteps":
     "アカウントを接続してプロジェクトを選ぶと、すぐに監視が始まります。",
@@ -86,14 +86,14 @@ export const ja = {
   "account.filter": "アカウントフィルター",
   "account.all": "すべてのアカウント",
   "activity.updated": "{time}に更新",
-  "history.label": "以前のデプロイを表示",
+  "history.label": "以前の実行を表示",
   "history.lead": "新しい結果から表示します",
   "history.help":
     "以前の履歴が必要な場合は対象を選択して追加で読み込んでください。表示期間と実行者フィルターはそのまま適用されます。",
   "history.target": "履歴を表示する対象",
   "history.selectTarget": "対象を選択",
   "history.loading": "履歴を読み込み中…",
-  "history.loadMore": "以前のデプロイをさらに表示",
+  "history.loadMore": "以前の実行をさらに表示",
   "history.end":
     "この対象には追加の履歴がないか、プラットフォームが提供する履歴の上限に達しています。",
   "accountPicker.defaultAccount": "{provider}アカウント",
@@ -119,7 +119,7 @@ export const ja = {
   "accountPicker.addAccount": "アカウント接続を追加",
   "accountPicker.loginHelp":
     "以下の認証方法でアカウントを接続します。トークンはこの端末の安全な認証情報ストアに保存されます。",
-  "tray.summary": "デプロイ概要",
+  "tray.summary": "実行概要",
   "tray.close": "パネルを閉じる",
   "tray.preview": "プレビュー · サンプルデータ",
   "tray.scope": "{scope} · {visible}/{total}件",
@@ -179,7 +179,7 @@ export const ja = {
   "connections.selectSaveHelp":
     "監視する対象だけを選択して設定を保存してください。",
   "connections.readOnly":
-    "Crowlineはデプロイ状態の参照のみを行い、デプロイを変更することはありません。",
+    "Crowlineは実行状態の参照のみを行い、リモートサービスを変更することはありません。",
   "connections.checkConnection": "接続を確認してください",
   "connections.tokenNotNeeded":
     "既存の認証を使用します。トークンの入力は不要です。",

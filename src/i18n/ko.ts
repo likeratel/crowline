@@ -36,12 +36,12 @@ export const ko = {
   "nav.panelPreferences": "상태바 표시 설정",
   "nav.connections": "연결 및 설정",
   "nav.generalSettings": "일반 설정",
-  "nav.tagline": "배포 모니터",
+  "nav.tagline": "실행 모니터",
   "dashboard.preview":
     "화면 미리보기 · 가상 데이터입니다. 실제 연결은 데스크톱 앱에서 사용할 수 있어요.",
   "dashboard.connectedProjects": "연결된 프로젝트",
-  "dashboard.title": "배포 현황",
-  "dashboard.subtitle": "선택한 계정의 실행 상태와 최근 배포를 확인하세요.",
+  "dashboard.title": "실행 현황",
+  "dashboard.subtitle": "선택한 계정의 최근 실행 상태를 확인하세요.",
   "dashboard.active": "진행 중",
   "dashboard.runs": "실행",
   "dashboard.completed": "최근 종료",
@@ -60,7 +60,7 @@ export const ko = {
   "dashboard.unknownActors": "실행자 미확인 {count}건은 전체에서 확인",
   "dashboard.guideTitle": "표시 기준 안내",
   "dashboard.guideHistory":
-    "진행 중은 마지막으로 확인한 실행 상태이며, 24시간을 넘겨도 종료가 확인될 때까지 유지됩니다. 최근 종료는 선택한 기간의 결과입니다. 더 오래된 결과는 ‘이전 배포 더 보기’에서 대상별로 불러옵니다.",
+    "진행 중은 마지막으로 확인한 실행 상태이며, 24시간을 넘겨도 종료가 확인될 때까지 유지됩니다. 최근 종료는 선택한 기간의 결과입니다. 더 오래된 결과는 ‘이전 실행 더 보기’에서 대상별로 불러옵니다.",
   "dashboard.guideSettings":
     "‘상태바 표시 설정’은 트레이에 보일 항목만 바꾸고, ‘연결 및 설정’은 대시보드가 감시할 계정과 대상을 바꿉니다.",
   "dashboard.pending":
@@ -69,7 +69,7 @@ export const ko = {
   "dashboard.onboardingTitle": "첫 번째 연결을 추가해 보세요",
   "dashboard.ready": "준비되었습니다",
   "dashboard.onboardingBody":
-    "이 기기에서 서비스 API와 로컬 CLI를 사용해 진행 중인 실행과 최근 배포를 모아 보여드립니다.",
+    "이 기기에서 서비스 API와 로컬 CLI를 사용해 진행 중인 실행과 최근 실행을 모아 보여드립니다.",
   "dashboard.connectService": "서비스 연결하기",
   "dashboard.onboardingSteps":
     "계정을 연결하고 프로젝트를 선택하면 바로 모니터링을 시작합니다.",
@@ -83,14 +83,14 @@ export const ko = {
   "account.filter": "계정 필터",
   "account.all": "모든 계정",
   "activity.updated": "{time} 갱신",
-  "history.label": "이전 배포 조회",
+  "history.label": "이전 실행 조회",
   "history.lead": "최근 결과를 먼저 표시합니다",
   "history.help":
     "이전 이력이 필요하면 대상을 선택해 추가로 불러오세요. 조회 기간과 실행자 필터는 그대로 적용됩니다.",
   "history.target": "이력 조회 대상",
   "history.selectTarget": "대상 선택",
   "history.loading": "이력 불러오는 중…",
-  "history.loadMore": "이전 배포 더 보기",
+  "history.loadMore": "이전 실행 더 보기",
   "history.end":
     "이 대상의 추가 이력이 없거나 플랫폼에서 제공하는 조회 범위 끝입니다.",
   "accountPicker.defaultAccount": "{provider} 계정",
@@ -116,7 +116,7 @@ export const ko = {
   "accountPicker.addAccount": "계정 연결 추가",
   "accountPicker.loginHelp":
     "추가한 계정은 아래 인증 방법으로 연결합니다. 토큰은 이 기기의 보안 저장소에 보관합니다.",
-  "tray.summary": "배포 요약",
+  "tray.summary": "실행 요약",
   "tray.close": "패널 닫기",
   "tray.preview": "미리보기 · 가상 데이터",
   "tray.scope": "{scope} · {visible}/{total}개 대상",
@@ -174,7 +174,7 @@ export const ko = {
   "connections.selectSave": "대상 선택 및 저장",
   "connections.selectSaveHelp": "모니터링할 대상만 선택해 설정을 저장하세요.",
   "connections.readOnly":
-    "Crowline은 배포 상태만 조회하며 배포를 변경하지 않습니다.",
+    "Crowline은 실행 상태만 조회하며 원격 서비스를 변경하지 않습니다.",
   "connections.checkConnection": "연결을 확인해 주세요",
   "connections.tokenNotNeeded":
     "기존 인증을 사용합니다. 토큰 입력이 필요하지 않아요.",

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
   Activity as ActivityIcon,
   AlertCircle,
@@ -36,6 +36,7 @@ import { useActivityDismissal } from "./useActivityDismissal";
 import { ActivityUndo } from "./components/ActivityUndo";
 import { isHiddenActivity } from "./domain";
 import { useMonitor } from "./useMonitor";
+import { useVisibleClock } from "./useVisibleClock";
 import { AccountFilter } from "./components/AccountFilter";
 import { SettingsPage } from "./components/SettingsPage";
 import { settingsCopy, type SettingsTab } from "./settingsCopy";
@@ -45,7 +46,6 @@ import { SettingsRecoveryNotice } from "./components/SettingsRecoveryNotice";
 import { I18nProvider, useI18n } from "./i18n";
 import { uxCopy } from "./uxCopy";
 import { DisplayScopeControl } from "./components/DisplayScopeControl";
-import "./App.css";
 
 const lockedSettingsChange = async () => false;
 
@@ -107,11 +107,7 @@ function Dashboard({ monitor }: { monitor: ReturnType<typeof useMonitor> }) {
     setSettingsVisited(true);
     setSettingsOpen(true);
   };
-  const [, tick] = useState(0);
-  useEffect(() => {
-    const timer = window.setInterval(() => tick((value) => value + 1), 15_000);
-    return () => window.clearInterval(timer);
-  }, []);
+  useVisibleClock();
   const {
     snapshot,
     busy,

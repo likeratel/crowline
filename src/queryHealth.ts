@@ -13,6 +13,8 @@ export type TargetQueryState = {
 export const queryStaleAfterMs = (snapshot: Snapshot) =>
   Math.max(60, snapshot.pollIntervalSeconds * 2) * 1000;
 
+const RESUME_FRESHNESS_MS = 20_000;
+
 export function queryStateForTarget(
   snapshot: Snapshot,
   target: Target,
@@ -113,8 +115,20 @@ export function shouldRequestRefresh(
 ) {
   if (!snapshot.settings.targets.length) return false;
   if (snapshot.refreshing) return networkRestored;
-  return snapshot.settings.targets.some((target) => {
-    const health = queryStateForTarget(snapshot, target, now);
+  const health = snapshot.settings.targets.map((target) =>
+    queryStateForTarget(snapshot, target, now),
+  );
+  if (
+    health.some(
+      (row) =>
+        row.state === "success" &&
+        row.lastSuccessfulAt &&
+        now - Date.parse(row.lastSuccessfulAt) >= RESUME_FRESHNESS_MS,
+    )
+  ) {
+    return true;
+  }
+  return health.some((health) => {
     return (
       health.state !== "success" &&
       health.state !== "checking" &&

@@ -126,7 +126,7 @@ test("retry restores the snapshot subscription before showing recovery", async (
   );
   await page.getByRole("button", { name: "다시 시도" }).click();
   await expect(
-    page.getByRole("heading", { name: "배포 현황", exact: true }),
+    page.getByRole("heading", { name: "실행 현황", exact: true }),
   ).toBeVisible();
   await expect
     .poll(() =>

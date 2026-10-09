@@ -83,7 +83,7 @@ test("black theme stays dark across OS preferences and fits narrow windows", asy
   );
   await page.setViewportSize({ width: 700, height: 800 });
   await expect(
-    page.getByRole("heading", { name: "배포 현황", exact: true }),
+    page.getByRole("heading", { name: "실행 현황", exact: true }),
   ).toBeVisible();
   expect(
     await page.evaluate(

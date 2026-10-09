@@ -57,7 +57,7 @@ test("default view is a compact summary with dashboard entry and no settings con
   page,
 }) => {
   await page.goto("/");
-  await expect(page.getByRole("main", { name: "배포 요약" })).toBeVisible();
+  await expect(page.getByRole("main", { name: "실행 요약" })).toBeVisible();
   await expect(page.locator(".summary-grid")).toHaveCount(0);
   await expect(
     page
@@ -78,7 +78,7 @@ test("default view is a compact summary with dashboard entry and no settings con
   await page.getByRole("button", { name: "대시보드 열기" }).click();
   await expect(page).toHaveURL(/view=dashboard/);
   await expect(
-    page.getByRole("heading", { name: "배포 현황", exact: true }),
+    page.getByRole("heading", { name: "실행 현황", exact: true }),
   ).toBeVisible();
 });
 
@@ -191,16 +191,14 @@ test("saved panel preferences affect the panel while preserving dashboard rows",
   // Switch the mounted view without reloading the synthetic in-memory backend.
   await page.route(/\/src\/main\.tsx(?:\?.*)?$/, async (route) => {
     const response = await route.fetch();
-    const source = (await response.text())
-      .replace(
-        'ReactDOM.createRoot(document.getElementById("root"))',
-        '(window.__testRoot = ReactDOM.createRoot(document.getElementById("root")))',
-      )
-      .replace(
-        'new URLSearchParams(window.location.search).get("view") === "dashboard"',
-        '(window.__showPanel = () => window.__testRoot.render(React.createElement(TrayPanel)), new URLSearchParams(window.location.search).get("view") === "dashboard")',
-      );
-    await route.fulfill({ response, body: source });
+    const source = (await response.text()).replace(
+      'ReactDOM.createRoot(document.getElementById("root"))',
+      '(window.__testRoot = ReactDOM.createRoot(document.getElementById("root")))',
+    );
+    await route.fulfill({
+      response,
+      body: `${source}\nwindow.__showPanel = async () => { const { TrayPanel } = await import('/src/components/TrayPanel.tsx'); window.__testRoot.render(React.createElement(TrayPanel)); };`,
+    });
   });
   await page.goto("/?view=dashboard");
   await expect
@@ -212,6 +210,7 @@ test("saved panel preferences affect the panel while preserving dashboard rows",
       ),
     )
     .toBe("function");
+  await expect(page.locator(".app-shell")).toBeVisible();
   const dashboardCount = await page.locator(".activity-row").count();
   await page.getByRole("button", { name: "설정", exact: true }).click();
   await page.getByRole("tab", { name: "메뉴 막대", exact: true }).click();
@@ -237,7 +236,7 @@ test("saved panel preferences affect the panel while preserving dashboard rows",
   await page.evaluate(() =>
     (window as unknown as { __showPanel: () => void }).__showPanel(),
   );
-  await expect(page.getByRole("main", { name: "배포 요약" })).toBeVisible();
+  await expect(page.getByRole("main", { name: "실행 요약" })).toBeVisible();
   await expect(page.locator(".panel-run")).toHaveCount(1);
   await expect(
     page.getByText("Deploy production", { exact: true }),

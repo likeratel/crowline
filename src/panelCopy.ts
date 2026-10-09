@@ -13,7 +13,7 @@ const text = {
     "选择菜单栏中显示的服务和项目。",
   ],
   scope: [
-    "표시 설정은 알림 설정과 별개입니다. 실행자 범위는 배포 현황의 ‘내 실행만 / 전체 실행’ 설정을 따릅니다.",
+    "표시 설정은 알림 설정과 별개입니다. 실행자 범위는 실행 현황의 ‘내 실행만 / 전체 실행’ 설정을 따릅니다.",
     "Display settings do not affect notifications. Actor scope follows My runs / All runs in the dashboard.",
     "表示設定は通知設定とは別です。実行者の範囲はダッシュボードの設定に従います。",
     "显示设置与通知设置相互独立，执行者范围跟随仪表板的筛选设置。",
