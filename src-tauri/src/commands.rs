@@ -100,6 +100,36 @@ pub async fn create_connection(
 }
 
 #[tauri::command]
+pub async fn connect_cloudflare(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: Provider,
+    account_id: String,
+    token: String,
+    connection_id: Option<String>,
+) -> Result<Account, String> {
+    state.ensure_settings_writable()?;
+    let credential = crate::providers::hosting::authenticate(provider, account_id, token).await?;
+    state
+        .connect_cloudflare(provider, credential, connection_id.as_deref(), &app)
+        .await
+}
+
+#[tauri::command]
+pub async fn register_eas_project(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    connection_id: String,
+    project_id: String,
+    owner: String,
+    slug: String,
+) -> Result<Vec<crate::models::Target>, String> {
+    state
+        .register_eas_project(&connection_id, &project_id, &owner, &slug, &app)
+        .await
+}
+
+#[tauri::command]
 pub async fn connect_bitbucket(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -215,6 +245,7 @@ pub(crate) fn validate_external_url(value: &str) -> Result<(), String> {
         "https://docs.gitlab.com/cli/",
         "https://docs.digitalocean.com/reference/doctl/how-to/install/",
         "https://cloud.google.com/sdk/docs/install",
+        "https://docs.expo.dev/eas/cli/",
         "https://learn.microsoft.com/cli/azure/install-azure-cli",
         "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html",
     ];

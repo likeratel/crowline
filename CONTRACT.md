@@ -57,8 +57,10 @@ Authentication commands:
 - begin_login({provider,connectionId,profile}) -> LoginStatus (Vercel CLI / AWS SSO)
 - get_login_status({provider,connectionId}) -> LoginStatus
 - connect_bitbucket({email,token,connectionId}) -> Account
+- connect_cloudflare({provider: cloudflare-pages|cloudflare-workers,accountId,token,connectionId: string|null}) -> Account
+- register_eas_project({connectionId,projectId: UUID,owner,slug}) -> Target[]
 
-GitHub and Vercel do not require a Crowline OAuth client ID or API-token form. Read requests use installed CLI commands; GitHub per-user tokens remain ephemeral in the backend subprocess environment. No token is returned over IPC. Bitbucket is the explicit token-authentication exception. See docs/authentication.md for setup and migration details.
+GitHub and Vercel do not require a Crowline OAuth client ID or API-token form. Read requests use installed CLI commands; GitHub per-user tokens remain ephemeral in the backend subprocess environment. No token is returned over IPC. Bitbucket and Cloudflare are explicit token-authentication exceptions; their tokens stay in OS credential storage and are never returned over IPC. Cloudflare only issues validated direct GET requests. Firebase uses the selected installed `gcloud` account and a short-lived process-only token; EAS receives a UUID, owner, and slug and runs its read commands in an app-created context without reading or changing the user's project. See docs/authentication.md for setup and migration details.
 
 ## Display scope and new project defaults
 

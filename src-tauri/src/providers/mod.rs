@@ -31,3 +31,5 @@ mod tests {
     }
 }
 pub(crate) mod api;
+
+pub(crate) mod http;

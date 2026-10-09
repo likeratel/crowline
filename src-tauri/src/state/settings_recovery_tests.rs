@@ -24,6 +24,7 @@ async fn unreadable_settings_remain_visible_and_block_changes_after_refresh() {
         settings_revision: AtomicU64::new(0),
         refresh_epoch: AtomicU64::new(0),
         history_lock: Mutex::new(()),
+        history_cache: Mutex::new(HistoryCache::default()),
         notification_engine: Mutex::new(NotificationEngine::default()),
         login_statuses: Mutex::new(HashMap::new()),
     };

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -21,6 +22,7 @@ use super::support::{parse_timestamp, terminal_time, PAGE_SIZE};
 
 const PROVIDER: Provider = Provider::Azure;
 const LABEL: &str = "Azure";
+const MAX_HISTORY_HOURS: i64 = 168;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -223,7 +225,7 @@ pub async fn page(
     let args = deployment_args(subscription, resource_group, app);
     let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
     let deployments: Vec<Deployment> = cli.json(&refs).await?;
-    map_deployments(deployments, target, app, resource_id)
+    map_deployments(deployments, target, app, resource_id, Utc::now())
 }
 
 fn webapp_args(subscription: &str) -> Vec<String> {
@@ -283,6 +285,7 @@ fn map_deployments(
     target: &Target,
     app: &str,
     resource_id: &str,
+    now: DateTime<Utc>,
 ) -> Result<ActivityPage, CliError> {
     let mut issues = Vec::new();
     let mut activities = deployments
@@ -290,9 +293,14 @@ fn map_deployments(
         .map(|deployment| map_deployment(deployment, target, app, resource_id, &mut issues))
         .collect::<Result<Vec<_>, _>>()?;
     activities.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-    let truncated = activities.len() > PAGE_SIZE;
+    let cutoff = now - Duration::hours(MAX_HISTORY_HOURS);
+    let relevant_history_omitted = activities.get(PAGE_SIZE..).is_some_and(|omitted| {
+        omitted
+            .iter()
+            .any(|activity| may_affect_history(activity, &cutoff))
+    });
     activities.truncate(PAGE_SIZE);
-    if truncated {
+    if relevant_history_omitted {
         issues.push(issue(
             PROVIDER,
             &target.connection_id,
@@ -305,6 +313,24 @@ fn map_deployments(
         next_cursor: None,
         issues,
     })
+}
+
+fn may_affect_history(activity: &Activity, cutoff: &DateTime<Utc>) -> bool {
+    let terminal = matches!(
+        activity.status,
+        ActivityStatus::Success
+            | ActivityStatus::Failed
+            | ActivityStatus::Canceled
+            | ActivityStatus::Skipped
+    );
+    if !terminal {
+        return true;
+    }
+    !activity
+        .finished_at
+        .as_deref()
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .is_some_and(|finished_at| finished_at.timestamp() < cutoff.timestamp())
 }
 
 fn map_deployment(
@@ -440,8 +466,16 @@ mod tests {
         }]"#;
         let deployments: Vec<Deployment> = serde_json::from_str(fixture).expect("fixture");
         let resource_id = target().metadata["resource_id"].clone();
-        let page =
-            map_deployments(deployments, &target(), "example-app", &resource_id).expect("page");
+        let page = map_deployments(
+            deployments,
+            &target(),
+            "example-app",
+            &resource_id,
+            DateTime::parse_from_rfc3339("2026-10-06T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        )
+        .expect("page");
         assert_eq!(page.activities[0].status, ActivityStatus::Failed);
         assert_eq!(page.activities[0].ownership, Ownership::Unknown);
         assert!(page.activities[0]
@@ -457,5 +491,73 @@ mod tests {
         assert!(args.contains(&"--name=app".into()));
         assert_eq!(deployment_status(2), ActivityStatus::Running);
         assert_eq!(deployment_status(99), ActivityStatus::Unknown);
+    }
+
+    #[test]
+    fn truncation_only_reports_history_that_may_still_matter() {
+        let now = DateTime::parse_from_rfc3339("2026-10-06T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let resource_id = target().metadata["resource_id"].clone();
+        let old_completed = deployments(
+            PAGE_SIZE + 1,
+            4,
+            "2026-09-28T10:00:00Z",
+            "2026-09-28T10:03:00Z",
+        );
+        let healthy =
+            map_deployments(old_completed, &target(), "example-app", &resource_id, now).unwrap();
+        assert_eq!(healthy.activities.len(), PAGE_SIZE);
+        assert!(healthy.issues.is_empty());
+
+        let recent_completed = deployments(
+            PAGE_SIZE + 1,
+            4,
+            "2026-10-05T10:00:00Z",
+            "2026-10-05T10:03:00Z",
+        );
+        let partial = map_deployments(
+            recent_completed,
+            &target(),
+            "example-app",
+            &resource_id,
+            now,
+        )
+        .unwrap();
+        assert_eq!(partial.issues.len(), 1);
+
+        let mut old_active =
+            deployments(PAGE_SIZE, 4, "2026-10-05T10:00:00Z", "2026-10-05T10:03:00Z");
+        old_active.extend(deployments(
+            1,
+            2,
+            "2026-09-20T10:00:00Z",
+            "2026-09-20T10:03:00Z",
+        ));
+        let partial =
+            map_deployments(old_active, &target(), "example-app", &resource_id, now).unwrap();
+        assert_eq!(partial.issues.len(), 1);
+    }
+
+    fn deployments(
+        count: usize,
+        status: i32,
+        started_at: &str,
+        finished_at: &str,
+    ) -> Vec<Deployment> {
+        (0..count)
+            .map(|index| Deployment {
+                id: format!("deployment-{index}"),
+                status,
+                status_text: None,
+                author: None,
+                author_email: None,
+                deployer: None,
+                message: None,
+                received_time: started_at.into(),
+                start_time: Some(started_at.into()),
+                end_time: Some(finished_at.into()),
+            })
+            .collect()
     }
 }

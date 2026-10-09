@@ -79,8 +79,13 @@ GitHub はインストール済みの `gh` CLI を使います。`gh auth login`
 | GitLab.com                        | デプロイ・CI パイプライン       | self-managed と実行者判定は未対応                                                           |
 | Bitbucket Cloud                   | リポジトリの Pipelines          | メールアドレスと API トークン、最近の履歴・実行中の状態・実行者の判定。Data Center は未対応 |
 | DigitalOcean、Google Cloud、Azure | デプロイ・Cloud Build/Run・Kudu | CLI ごとの対象/出力/ページ制限                                                              |
+| Cloudflare Pages / Workers | Pages デプロイ、Worker デプロイ・Builds | アカウント ID と OS 資格情報ストアの API トークン、直接の読み取り専用 HTTP。Pages・Workers・Builds の権限を分離 |
+| Firebase | Hosting の公開済みリリース、App Hosting ロールアウト | インストール済み `gcloud` と選択中の有効アカウント、プロセス内だけの短期アクセストークン |
+| EAS / Expo | プロジェクト単位の Build、公開済み Update | インストール済み `eas`、プロジェクト UUID・owner・slug を入力。アカウント全体の自動検出はなし |
 
-EAS/Expo、fastlane、Cloudflare Pages/Workers、Firebase、Supabase はカタログ上の制約案内のみで、直接監視には未対応です。ローカル CLI の確認が利用不能な理由を示す場合がありますが、不完全なデータから活動を推測しません。該当する CI 作業は GitHub Actions または GitLab パイプラインで監視してください。[プロバイダー決定表](docs/authentication.md#provider-decision-matrix)と[モバイルプロバイダー調査](docs/mobile-provider-notes.md)を参照してください。
+Cloudflare トークンは OS の資格情報ストアに保存します。Pages には **Cloudflare Pages Read**、Worker デプロイには **Workers Scripts Read**、Builds には **Workers CI Read** が必要です。Firebase 接続は現在の `gcloud` アカウントに固定し、アクセストークンとプロジェクト一覧に `--account` を使います。Firebase CLI のログインは使いません。EAS は独自の読み取り専用コンテキストを作成し、選択したプロジェクトのファイルを読んだり変更したりしません。公開済み EAS Update には開始実行者がなく、失敗した公開試行も含まれません。Supabase Edge Functions と fastlane は引き続き CI 案内であり、信頼できる実行履歴は GitHub Actions、GitLab CI、または fastlane を実行した CI で確認します。[プロバイダー決定表](docs/authentication.md#provider-decision-matrix)と[モバイルプロバイダー調査](docs/mobile-provider-notes.md)を参照してください。
+
+これらのサービス経路は合成アダプター fixture とブラウザー検証に合格しましたが、実アカウントでは検証していません。テストには実際の認証情報やサービス応答を保存しません。結果と限界は[共同製品レビュー・検証記録](docs/product-review-2026-10-06.md)に記載しています。
 
 ### Bitbucket Cloud
 

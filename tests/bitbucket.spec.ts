@@ -158,7 +158,7 @@ test("Bitbucket retries snapshot loading without submitting credentials again", 
   await expect(
     page
       .getByText(
-        "계정은 연결됐지만 화면을 갱신하지 못했습니다. 다시 조회해 주세요.",
+        "연결은 저장됐지만 화면을 갱신하지 못했습니다. 다시 시도하세요.",
       )
       .first(),
   ).toBeVisible();

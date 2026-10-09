@@ -1,7 +1,7 @@
-use super::*;
+use super::{history::HistoryCache, *};
 use crate::{
     cli::CliInvocation,
-    models::{ActivityPage, QueryHealthStatus, TargetHistory},
+    models::{ActivityPage, QueryHealthStatus},
     providers::catalog,
 };
 use futures::{stream, StreamExt};
@@ -26,7 +26,6 @@ impl AppState {
                 let attempted_at = Utc::now().to_rfc3339();
                 let next = Snapshot {
                     refreshing: true,
-                    history: Vec::new(),
                     pending_targets: current.settings.targets.iter().map(Target::key).collect(),
                     query_health: checking_query_health(
                         &current.settings.targets,
@@ -61,7 +60,13 @@ impl AppState {
                 ..current
             };
             self.emit(done.clone(), publisher).await;
-            refresh_cycle.finish(snapshot_needs_followup(&done, Utc::now()));
+            // Keep the cache locked through `finish`: a load failure must either be
+            // included here or observe that the refresh cycle has already ended.
+            let history_cache = self.history_cache.lock().await;
+            let history_needs_followup = history_cache.needs_followup();
+            refresh_cycle
+                .finish(snapshot_needs_followup(&done, Utc::now()) || history_needs_followup);
+            drop(history_cache);
             return done;
         }
     }
@@ -181,8 +186,14 @@ impl AppState {
             return false;
         }
         let current = self.snapshot().await;
+        let previous_connection = current
+            .connections
+            .iter()
+            .find(|item| item.connection_id == connection.connection_id);
         let connection =
             retain_last_confirmed_accounts(&current.connections, vec![connection]).remove(0);
+        let identity_changed =
+            previous_connection.is_some_and(|previous| previous.account != connection.account);
         let connections: Vec<_> = current
             .connections
             .iter()
@@ -192,6 +203,20 @@ impl AppState {
             .collect();
         let activities =
             partition_cache_by_account(&current.activities, &current.connections, &connections);
+        let history = if identity_changed {
+            self.history_cache
+                .lock()
+                .await
+                .remove_connection(&connection.connection_id);
+            current
+                .history
+                .iter()
+                .filter(|entry| entry.connection_id != connection.connection_id)
+                .cloned()
+                .collect()
+        } else {
+            current.history.clone()
+        };
         let mut issues: Vec<_> = current
             .issues
             .iter()
@@ -225,6 +250,7 @@ impl AppState {
             Snapshot {
                 connections,
                 activities,
+                history,
                 issues,
                 pending_targets,
                 query_health,
@@ -280,7 +306,16 @@ impl AppState {
             Vec::new()
         };
         let hidden_activities = current.settings.hidden_activities.clone();
-        let mut updated = apply_page(current, target, result, kind, epoch);
+        let mut history_cache = self.history_cache.lock().await;
+        let mut updated = apply_page_with_history(
+            current,
+            target,
+            result,
+            kind,
+            epoch,
+            revision,
+            &mut history_cache,
+        );
         for delivery in notifications.into_iter().filter(|delivery| {
             !hidden_activities
                 .iter()
@@ -347,46 +382,119 @@ impl AppState {
                     && t.id == target_id
                     && t.provider == history.provider
             })
+            .cloned()
             .ok_or_else(|| "The selected target no longer exists.".to_owned())?;
-        let account = self.account(connection_id, target.provider).await?;
-        let cli = self.tools.invocation_for(&account)?;
+        if !self.history_cache.lock().await.begin_load(
+            &target,
+            cursor,
+            generation,
+            revision,
+            Utc::now(),
+        ) {
+            return Err("The history page has changed. Refresh and try again.".into());
+        }
+        let account = match self.account(connection_id, target.provider).await {
+            Ok(account) => account,
+            Err(message) => {
+                self.fail_history_load(&target, cursor, generation).await;
+                return Err(message);
+            }
+        };
+        let cli = match self.tools.invocation_for(&account) {
+            Ok(cli) => cli,
+            Err(message) => {
+                self.fail_history_load(&target, cursor, generation).await;
+                return Err(message);
+            }
+        };
         let identity = current
             .connections
             .iter()
             .find(|c| c.connection_id == connection_id)
-            .and_then(|c| c.account.as_deref());
-        let authenticated = tokio::time::timeout(
+            .and_then(|c| c.account.clone());
+        let authenticated = match tokio::time::timeout(
             REQUEST_TIMEOUT,
-            catalog::connection(cli.as_ref(), &account, Some(target)),
+            catalog::connection(cli.as_ref(), &account, Some(&target)),
         )
         .await
-        .map_err(|_| {
-            "Connection check timed out. Refresh before loading more history.".to_owned()
-        })?;
-        if authenticated.status != ConnectionStatus::Connected
-            || authenticated.account.as_deref() != identity
         {
+            Ok(authenticated) => authenticated,
+            Err(_) => {
+                self.fail_history_load(&target, cursor, generation).await;
+                return Err(
+                    "Connection check timed out. Refresh before loading more history.".into(),
+                );
+            }
+        };
+        if authenticated.status != ConnectionStatus::Connected || authenticated.account != identity
+        {
+            self.fail_history_load(&target, cursor, generation).await;
             return Err(
                 "The CLI account changed or needs sign-in. Refresh before loading more history."
                     .into(),
             );
         }
-        let page = bounded_page(
+        let page = match bounded_page(
             cli.as_ref(),
-            target,
+            &target,
             Some(cursor),
-            identity,
+            identity.as_deref(),
             current.settings.history_hours,
         )
-        .await?;
+        .await
+        {
+            Ok(page) => page,
+            Err(message) => {
+                self.fail_history_load(&target, cursor, generation).await;
+                return Err(message);
+            }
+        };
         let _publish = self.publish_lock.lock().await;
-        if !self.current_generation(revision, generation) {
-            return Err("Settings or refresh changed while loading history. Try again.".into());
+        if self.settings_revision.load(Ordering::SeqCst) != revision {
+            self.fail_history_load(&target, cursor, generation).await;
+            return Err("Settings changed while loading history. Try again.".into());
         }
         let current = self.snapshot().await;
-        let next = apply_page(current, target, Ok(page), PageKind::History, generation);
+        let target_is_current = current
+            .settings
+            .targets
+            .iter()
+            .any(|candidate| candidate == &target);
+        let identity_is_current = current
+            .connections
+            .iter()
+            .find(|connection| connection.connection_id == target.connection_id)
+            .and_then(|connection| connection.account.as_ref())
+            == identity.as_ref();
+        let mut history_cache = self.history_cache.lock().await;
+        if !target_is_current
+            || !identity_is_current
+            || !history_cache.accepts_inflight(&target, cursor, generation, revision, Utc::now())
+        {
+            history_cache.mark_failed(&target, cursor, generation);
+            drop(history_cache);
+            self.request_refresh();
+            return Err("The history page changed while loading. Try again.".into());
+        }
+        let next = apply_page_with_history(
+            current,
+            &target,
+            Ok(page),
+            PageKind::History,
+            generation,
+            revision,
+            &mut history_cache,
+        );
         self.emit(next.clone(), publisher).await;
         Ok(next)
+    }
+
+    async fn fail_history_load(&self, target: &Target, cursor: &str, generation: u64) {
+        self.history_cache
+            .lock()
+            .await
+            .mark_failed(target, cursor, generation);
+        self.request_refresh();
     }
 }
 
@@ -409,7 +517,7 @@ async fn bounded_page(
         catalog::page(cli, target, cursor, identity, hours),
     )
     .await
-    .map_err(|_| "Deployment lookup timed out. Last known results may be stale.".to_owned())?
+    .map_err(|_| "Run history lookup timed out. Last known results may be stale.".to_owned())?
 }
 
 fn same_target(activity: &Activity, target: &Target) -> bool {
@@ -418,12 +526,27 @@ fn same_target(activity: &Activity, target: &Target) -> bool {
         && activity.target_id == target.id
 }
 
+#[cfg(test)]
 fn apply_page(
     current: Snapshot,
     target: &Target,
     result: Result<ActivityPage, String>,
     kind: PageKind,
     epoch: u64,
+) -> Snapshot {
+    let mut history_cache = HistoryCache::default();
+    apply_page_with_history(current, target, result, kind, epoch, 0, &mut history_cache)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_page_with_history(
+    current: Snapshot,
+    target: &Target,
+    result: Result<ActivityPage, String>,
+    kind: PageKind,
+    epoch: u64,
+    settings_revision: u64,
+    history_cache: &mut HistoryCache,
 ) -> Snapshot {
     let mut issues = current.issues.clone();
     let mut history = current.history.clone();
@@ -432,8 +555,20 @@ fn apply_page(
     let mut query_health = current.query_health.clone();
     let outcome = QueryOutcome::from_result(&result);
     match result {
-        Ok(page) => {
+        Ok(mut page) => {
             let succeeded = page.issues.is_empty() || !page.activities.is_empty();
+            let now = Utc::now();
+            let cutoff = now - chrono::Duration::hours(i64::from(current.settings.history_hours));
+            let mut history_entry = None;
+            let mut loaded_ids = HashSet::new();
+            let updates_recent_history =
+                kind == PageKind::Recent && outcome != QueryOutcome::Failed;
+            if updates_recent_history {
+                let recent =
+                    history_cache.recent(target, settings_revision, page.next_cursor.clone(), now);
+                loaded_ids = recent.loaded_ids;
+                history_entry = Some(recent.entry);
+            }
             if kind == PageKind::Recent {
                 issues.retain(|i| {
                     i.connection_id.as_deref() != Some(&target.connection_id)
@@ -445,6 +580,9 @@ fn apply_page(
                         !same_target(a, target)
                             || catalog::has_active_scan(target.provider)
                                 && is_active_status(a.status)
+                            || loaded_ids.contains(&a.id)
+                                && is_history_status(a)
+                                && in_history_range(a, cutoff)
                     });
                 }
             }
@@ -457,33 +595,76 @@ fn apply_page(
                         || fresh_ids.contains(a.id.as_str())
                 });
             }
+            let mut committed_history_ids = Vec::new();
+            let mut history_limit_reached = false;
             for activity in page.activities {
+                if kind == PageKind::History
+                    && (!is_history_status(&activity) || !in_history_range(&activity, cutoff))
+                {
+                    continue;
+                }
                 let existing = activities.iter().position(|a| {
                     a.connection_id == activity.connection_id
                         && a.provider == activity.provider
+                        && a.target_id == activity.target_id
                         && a.id == activity.id
                 });
                 if let Some(index) = existing {
-                    activities[index] = newer_observation(&activities[index], &activity).clone();
+                    if kind != PageKind::History {
+                        activities[index] =
+                            newer_observation(&activities[index], &activity).clone();
+                    }
+                    if kind == PageKind::History {
+                        committed_history_ids.push(activity.id);
+                    }
+                } else if kind == PageKind::History && activities.len() >= MAX_HISTORY_ACTIVITIES {
+                    history_limit_reached = true;
                 } else {
+                    if kind == PageKind::History {
+                        committed_history_ids.push(activity.id.clone());
+                    }
                     activities.push(activity);
                 }
             }
+            if updates_recent_history {
+                let retained_loaded_ids = activities
+                    .iter()
+                    .filter(|activity| {
+                        same_target(activity, target)
+                            && loaded_ids.contains(&activity.id)
+                            && is_history_status(activity)
+                            && in_history_range(activity, cutoff)
+                    })
+                    .map(|activity| activity.id.clone())
+                    .collect();
+                history_cache.replace_loaded_ids(target, retained_loaded_ids);
+            }
+            if kind == PageKind::History {
+                if history_limit_reached {
+                    page.next_cursor = None;
+                    page.issues.push(Issue {
+                        provider: target.provider,
+                        connection_id: Some(target.connection_id.clone()),
+                        target_id: Some(target.id.clone()),
+                        message: "History limit reached. Narrow the selected targets.".into(),
+                    });
+                }
+                history_entry = history_cache.commit(
+                    target,
+                    epoch,
+                    committed_history_ids,
+                    page.next_cursor.clone(),
+                    now,
+                );
+            }
             issues.extend(page.issues);
-            if kind != PageKind::Active {
+            if let Some(history_entry) = history_entry {
                 history.retain(|h| {
                     h.connection_id != target.connection_id
                         || h.target_id != target.id
                         || h.provider != target.provider
                 });
-                history.push(TargetHistory {
-                    provider: target.provider,
-                    connection_id: target.connection_id.clone(),
-                    target_id: target.id.clone(),
-                    next_cursor: page.next_cursor,
-                    checked_at: Utc::now().to_rfc3339(),
-                    generation: epoch,
-                });
+                history.push(history_entry);
             }
             if succeeded {
                 last_updated_at = Some(Utc::now().to_rfc3339());
@@ -675,7 +856,19 @@ async fn bounded_active(
 ) -> Result<ActivityPage, String> {
     tokio::time::timeout(REQUEST_TIMEOUT, catalog::active(cli, target, identity))
         .await
-        .map_err(|_| "Active deployment lookup timed out; the recent list is partial.".to_owned())?
+        .map_err(|_| "Active run lookup timed out; the recent list is partial.".to_owned())?
+}
+
+fn in_history_range(activity: &Activity, cutoff: chrono::DateTime<Utc>) -> bool {
+    chrono::DateTime::parse_from_rfc3339(&activity.updated_at)
+        .map(|updated| updated.with_timezone(&Utc) >= cutoff)
+        .unwrap_or(false)
+}
+
+fn is_history_status(activity: &Activity) -> bool {
+    is_terminal_status(activity.status)
+        || crate::panel::is_blocked(activity)
+        || !is_active_status(activity.status) && activity.finished_at.is_some()
 }
 
 #[cfg(test)]

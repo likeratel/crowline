@@ -79,8 +79,13 @@ GitHub 使用已安装的 `gh` CLI。运行 `gh auth login` 后，为每个连�
 | GitLab.com                        | 部署与 CI 管道               | 不支持 self-managed 和执行者判定                                    |
 | Bitbucket Cloud                   | 仓库 Pipelines               | 邮箱和 API 令牌、最近记录与运行状态、执行者识别。不支持 Data Center |
 | DigitalOcean、Google Cloud、Azure | 部署、Cloud Build/Run、Kudu  | 各 CLI 的范围/输出/分页限制                                         |
+| Cloudflare Pages / Workers | Pages 部署、Worker 部署和 Builds | 账户 ID 与 OS 凭据存储中的 API 令牌，直接只读 HTTP；Pages、Workers、Builds 使用独立权限 |
+| Firebase | Hosting 已发布版本、App Hosting rollout | 已安装的 `gcloud` 与选定的有效账户，仅在进程中保留的短期访问令牌 |
+| EAS / Expo | 项目范围的 Build、已发布的 Update | 已安装的 `eas`，输入项目 UUID、owner 和 slug；不自动发现账户中的全部项目 |
 
-EAS/Expo、fastlane、Cloudflare Pages/Workers、Firebase、Supabase 只提供目录中的限制说明，并非直接监控集成。本地 CLI 检查可能显示不可用原因，但 crowline 不会从不完整的数据推断活动。适用时请通过 GitHub Actions 或 GitLab 管道监控 CI 工作。参见[服务决策表](docs/authentication.md#provider-decision-matrix)和[移动端服务商调研](docs/mobile-provider-notes.md)。
+Cloudflare 令牌保存在 OS 凭据存储中。Pages 需要 **Cloudflare Pages Read**，Worker 部署需要 **Workers Scripts Read**，Builds 需要 **Workers CI Read**。Firebase 连接固定到当前 `gcloud` 账户，并为访问令牌和项目列表使用 `--account`；不使用 Firebase CLI 登录。EAS 会创建自己的只读上下文，不会读取或更改所选项目文件。已发布的 EAS Update 没有发起执行者，也不包含失败的发布尝试。Supabase Edge Functions 和 fastlane 仍为 CI 指引；可靠的运行历史请在 GitHub Actions、GitLab CI 或执行 fastlane 的 CI 中查看。参见[服务决策表](docs/authentication.md#provider-decision-matrix)和[移动端服务商调研](docs/mobile-provider-notes.md)。
+
+这些服务路径已通过合成适配器 fixture 和浏览器验证，但尚未通过真实账户验证。测试不会保存真实凭据或服务响应。结果和限制见[联合产品审查与验证记录](docs/product-review-2026-10-06.md)。
 
 ### Bitbucket Cloud
 

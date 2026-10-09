@@ -27,6 +27,7 @@ const MAX_OUTPUT_BYTES: u64 = 8 * 1024 * 1024 + 1;
 #[derive(Clone)]
 pub struct CliInvocation {
     program: PathBuf,
+    working_directory: Option<PathBuf>,
     prefix_args: Vec<String>,
     process_gate: std::sync::Arc<Semaphore>,
     environment: Vec<(OsString, OsString)>,
@@ -64,6 +65,7 @@ impl CliInvocation {
     fn direct(program: PathBuf, process_gate: std::sync::Arc<Semaphore>) -> Self {
         Self {
             program,
+            working_directory: None,
             prefix_args: Vec::new(),
             process_gate,
             environment: Vec::new(),
@@ -83,6 +85,16 @@ impl CliInvocation {
     #[cfg(test)]
     pub(crate) fn for_test(program: PathBuf) -> Self {
         Self::direct(program, std::sync::Arc::new(Semaphore::new(4)))
+    }
+
+    pub(crate) fn for_eas_project(&self, directory: &Path) -> Self {
+        let mut invocation = self.clone();
+        invocation.working_directory = Some(directory.to_path_buf());
+        invocation.environment.extend([
+            (OsString::from("EAS_NO_VCS"), OsString::from("1")),
+            (OsString::from("EXPO_NO_DOTENV"), OsString::from("1")),
+        ]);
+        invocation
     }
 
     pub async fn version(&self) -> Option<String> {
@@ -301,6 +313,9 @@ impl CliInvocation {
         if let Some(path) = &self.vercel_global_config {
             command.arg("--global-config").arg(path);
         }
+        if let Some(directory) = &self.working_directory {
+            command.current_dir(directory);
+        }
         for name in &self.removed_environment {
             command.env_remove(name);
         }
@@ -342,6 +357,9 @@ impl CliInvocation {
             .kill_on_drop(true);
         if let Some(path) = &self.vercel_global_config {
             command.arg("--global-config").arg(path);
+        }
+        if let Some(directory) = &self.working_directory {
+            command.current_dir(directory);
         }
         for name in &self.removed_environment {
             command.env_remove(name);
@@ -523,38 +541,39 @@ pub struct Toolchain {
 impl Toolchain {
     pub async fn discover(_resource_dir: Option<&Path>, app_data_dir: &Path) -> Self {
         let directories = candidate_directories();
-        let execution_path = env::join_paths(&directories).ok();
-        let aws = discover_cli(&["aws"], 1, &["--version"], &directories, &execution_path).await;
-        let github = discover_cli(&["gh"], 4, &["--version"], &directories, &execution_path).await;
-        let vercel = discover_cli(
-            &["vercel"],
-            4,
-            &["--version"],
-            &directories,
-            &execution_path,
-        )
-        .await;
-        let local = futures::future::join_all(crate::providers::catalog::local_tools().iter().map(
-            |(provider, names)| {
-                let directories = &directories;
-                let execution_path = &execution_path;
-                async move {
-                    discover_cli(
-                        names,
-                        4,
-                        version_args(*provider),
-                        directories,
-                        execution_path,
-                    )
-                    .await
-                    .map(|invocation| (*provider, invocation))
-                }
-            },
-        ))
-        .await
-        .into_iter()
-        .flatten()
-        .collect();
+        Self::discover_in(&directories, app_data_dir).await
+    }
+
+    async fn discover_in(directories: &[PathBuf], app_data_dir: &Path) -> Self {
+        let execution_path = env::join_paths(directories).ok();
+        let aws = discover_cli(&["aws"], 1, &["--version"], directories, &execution_path);
+        let github = discover_cli(&["gh"], 4, &["--version"], directories, &execution_path);
+        let vercel = discover_cli(&["vercel"], 4, &["--version"], directories, &execution_path);
+        // Firebase reuses the same gcloud executable and version check.
+        let local = futures::future::join_all(
+            crate::providers::catalog::local_tools()
+                .iter()
+                .filter(|(provider, _)| *provider != Provider::Firebase)
+                .map(|(provider, names)| {
+                    let execution_path = &execution_path;
+                    async move {
+                        discover_cli(
+                            names,
+                            4,
+                            version_args(*provider),
+                            directories,
+                            execution_path,
+                        )
+                        .await
+                        .map(|invocation| (*provider, invocation))
+                    }
+                }),
+        );
+        let (aws, github, vercel, local) = tokio::join!(aws, github, vercel, local);
+        let mut local: HashMap<_, _> = local.into_iter().flatten().collect();
+        if let Some(gcloud) = local.get(&Provider::Gcloud).cloned() {
+            local.insert(Provider::Firebase, gcloud);
+        }
         Self {
             github,
             vercel,
@@ -586,7 +605,10 @@ impl Toolchain {
     }
 
     pub fn invocation_for(&self, account: &Account) -> Result<Option<CliInvocation>, String> {
-        if account.provider == Provider::Bitbucket {
+        if matches!(
+            account.provider,
+            Provider::Bitbucket | Provider::CloudflarePages | Provider::CloudflareWorkers
+        ) {
             account.validate()?;
             return Ok(None);
         }
@@ -692,8 +714,25 @@ fn provider_environment(provider: Provider) -> &'static [&'static str] {
             "VERCEL_PROJECT_ID",
             "VERCEL_SCOPE",
         ],
-        Provider::Eas => &["EXPO_TOKEN"],
-        Provider::Firebase => &["FIREBASE_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS"],
+        Provider::Eas => &[
+            "EXPO_TOKEN",
+            "EAS_PROJECT_ROOT",
+            "EXPO_API_URL",
+            "EXPO_STAGING",
+            "EXPO_LOCAL",
+        ],
+        Provider::Firebase => &[
+            "FIREBASE_TOKEN",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "CLOUDSDK_AUTH_ACCESS_TOKEN",
+            "CLOUDSDK_AUTH_ACCESS_TOKEN_FILE",
+            "CLOUDSDK_AUTH_TOKEN_HOST",
+            "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE",
+            "CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT",
+            "CLOUDSDK_CORE_ACCOUNT",
+            "CLOUDSDK_CORE_PROJECT",
+            "CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDRESOURCEMANAGER",
+        ],
         Provider::Supabase => &["SUPABASE_ACCESS_TOKEN"],
         _ => &[],
     }
@@ -1157,6 +1196,45 @@ printf '{}\n'
         assert_eq!(
             classify_failure(b"remote service unavailable"),
             CliError::Failed
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn startup_probes_run_together_and_share_gcloud_detection() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        for name in ["aws", "gh", "vercel", "gcloud"] {
+            let script = root.path().join(name);
+            std::fs::write(&script, r#"#!/bin/sh
+root=${0%/*}
+printf 'started\n' >> "$0.started"
+attempt=0
+while [ ! -f "$root/aws.started" ] || [ ! -f "$root/gh.started" ] || [ ! -f "$root/vercel.started" ] || [ ! -f "$root/gcloud.started" ]; do
+  attempt=$((attempt + 1))
+  [ "$attempt" -lt 200 ] || exit 1
+  /bin/sleep 0.01
+done
+printf '1.2.3\n'
+"#).unwrap();
+            std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let tools = Toolchain::discover_in(&[root.path().to_owned()], root.path()).await;
+        for cli in [
+            tools.aws.as_ref(),
+            tools.github.as_ref(),
+            tools.vercel.as_ref(),
+            tools.local.get(&Provider::Firebase),
+            tools.local.get(&Provider::Gcloud),
+        ] {
+            assert_eq!(cli.unwrap().version().await.as_deref(), Some("1.2.3"));
+        }
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("gcloud.started"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
         );
     }
 

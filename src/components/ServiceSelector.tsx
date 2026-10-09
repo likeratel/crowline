@@ -2,6 +2,7 @@ import { useRef, useState, type KeyboardEvent } from "react";
 import { Search } from "lucide-react";
 import { PROVIDERS, PROVIDER_NAMES, type Provider } from "../domain";
 import { useI18n } from "../i18n";
+import { expansionCopy } from "../providerExpansionCopy";
 import { uxCopy } from "../uxCopy";
 import { getPlatformDetails } from "../platformDetails";
 import { ProviderIcon } from "./ProviderIcon";
@@ -66,7 +67,7 @@ export function ServiceSelector({
   };
   const unsupportedLabel = (value: Provider) =>
     getPlatformDetails(value, locale).unsupportedMessage
-      ? uxCopy(locale, "unsupported")
+      ? expansionCopy(locale, "capabilityLabel")
       : "";
   return (
     <>

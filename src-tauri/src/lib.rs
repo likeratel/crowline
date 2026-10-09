@@ -1,4 +1,5 @@
 mod cli;
+mod cloudflare_credentials;
 mod commands;
 mod credentials;
 mod desktop;
@@ -82,6 +83,8 @@ pub fn run() {
             commands::discover,
             commands::create_connection,
             commands::connect_bitbucket,
+            commands::connect_cloudflare,
+            commands::register_eas_project,
             commands::get_github_cli_accounts,
             commands::connect_github_cli_account,
             commands::remove_connection,

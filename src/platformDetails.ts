@@ -1,3 +1,4 @@
+import { expansionCopy } from "./providerExpansionCopy";
 import type { Provider } from "./domain";
 import {
   resolveLocale,
@@ -83,17 +84,15 @@ const platformDetails: Record<Provider, PlatformDefinition> = {
     canStartAppLogin: false,
     cliCommand: null,
     connectionSummary: { key: "platform.cloudflarePagesSummary" },
-    supportsMultipleAccounts: false,
+    supportsMultipleAccounts: true,
     supportsActorAttribution: false,
-    unsupportedMessage: { key: "platform.cloudflarePagesUnsupported" },
   },
   "cloudflare-workers": {
     canStartAppLogin: false,
     cliCommand: null,
     connectionSummary: { key: "platform.cloudflareWorkersSummary" },
-    supportsMultipleAccounts: false,
+    supportsMultipleAccounts: true,
     supportsActorAttribution: false,
-    unsupportedMessage: { key: "platform.cloudflareWorkersUnsupported" },
   },
   heroku: {
     canStartAppLogin: false,
@@ -146,19 +145,17 @@ const platformDetails: Record<Provider, PlatformDefinition> = {
   },
   eas: {
     canStartAppLogin: false,
-    cliCommand: null,
+    cliCommand: "eas login",
     connectionSummary: { key: "platform.easSummary" },
     supportsMultipleAccounts: false,
     supportsActorAttribution: false,
-    unsupportedMessage: { key: "platform.easUnsupported" },
   },
   firebase: {
     canStartAppLogin: false,
-    cliCommand: null,
+    cliCommand: "gcloud auth login",
     connectionSummary: { key: "platform.firebaseSummary" },
     supportsMultipleAccounts: false,
     supportsActorAttribution: false,
-    unsupportedMessage: { key: "platform.firebaseUnsupported" },
   },
   supabase: {
     canStartAppLogin: false,
@@ -190,19 +187,34 @@ export function getPlatformDetails(
   locale: Locale = resolveLocale("system"),
 ): PlatformDetails {
   const details = platformDetails[provider] ?? fallbackDetails;
+  const summaryKey = (
+    {
+      "cloudflare-pages": "pagesSummary",
+      "cloudflare-workers": "workersSummary",
+      firebase: "firebaseSummary",
+      eas: "easSummary",
+    } as const
+  )[provider as "cloudflare-pages" | "cloudflare-workers" | "firebase" | "eas"];
   return {
     ...details,
-    connectionSummary: translate(
-      locale,
-      details.connectionSummary.key,
-      details.connectionSummary.values,
-    ),
-    unsupportedMessage: details.unsupportedMessage
-      ? translate(
+    connectionSummary: summaryKey
+      ? expansionCopy(locale, summaryKey)
+      : translate(
           locale,
-          details.unsupportedMessage.key,
-          details.unsupportedMessage.values,
-        )
-      : undefined,
+          details.connectionSummary.key,
+          details.connectionSummary.values,
+        ),
+    unsupportedMessage:
+      provider === "supabase"
+        ? expansionCopy(locale, "supabaseGuidance")
+        : provider === "fastlane"
+          ? expansionCopy(locale, "ciGuidance")
+          : details.unsupportedMessage
+            ? translate(
+                locale,
+                details.unsupportedMessage.key,
+                details.unsupportedMessage.values,
+              )
+            : undefined,
   };
 }

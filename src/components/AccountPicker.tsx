@@ -10,6 +10,8 @@ import {
 import { getPlatformDetails } from "../platformDetails";
 import { useI18n } from "../i18n";
 import { accountDisplayName } from "../accountNames";
+import { CloudflareConnect } from "./CloudflareConnect";
+import { expansionCopy } from "../providerExpansionCopy";
 import { BitbucketConnect } from "./BitbucketConnect";
 import { AccountAliasEditor } from "./AccountAliasEditor";
 import { SettingFeedback } from "./SettingFeedback";
@@ -32,6 +34,11 @@ interface Props {
     token: string,
     connectionId: string | null,
   ) => Promise<boolean>;
+  onConnectCloudflare: (
+    accountId: string,
+    token: string,
+    connectionId: string | null,
+  ) => Promise<boolean>;
   onLoadProfiles: () => Promise<void>;
   savedTargetCount: number;
 }
@@ -48,11 +55,14 @@ export function AccountPicker({
   onCreate,
   onRemove,
   onConnectBitbucket,
+  onConnectCloudflare,
   onLoadProfiles,
   savedTargetCount,
 }: Props) {
   const { locale, t } = useI18n();
   const details = getPlatformDetails(provider, locale);
+  const isCloudflare =
+    provider === "cloudflare-pages" || provider === "cloudflare-workers";
   const supportsMultipleAccounts = details.supportsMultipleAccounts;
   const [adding, setAdding] = useState(false);
   const [renewing, setRenewing] = useState(false);
@@ -109,7 +119,7 @@ export function AccountPicker({
   if (details.unsupportedMessage) {
     return (
       <div className="account-picker unsupported-connection" role="status">
-        <strong>{t("accountPicker.unavailable")}</strong>
+        <strong>{expansionCopy(locale, "capabilityLabel")}</strong>
         <p>{details.unsupportedMessage}</p>
       </div>
     );
@@ -231,6 +241,35 @@ export function AccountPicker({
           </button>
         </div>
       )}
+      {isCloudflare && selectedAccount?.mode === "isolated" && !adding && (
+        <button
+          className="text-button"
+          disabled={busy}
+          onClick={() => setRenewing(!renewing)}
+        >
+          {expansionCopy(locale, "renew")}
+        </button>
+      )}
+      {isCloudflare && (adding || renewing || accounts.length === 0) && (
+        <CloudflareConnect
+          key={renewing ? selectedId : "new"}
+          busy={busy}
+          renewing={renewing}
+          accountId={renewing ? (selectedAccount?.profile ?? "") : ""}
+          onConnect={async (id, token) => {
+            const connected = await onConnectCloudflare(
+              id,
+              token,
+              renewing ? selectedId : null,
+            );
+            if (connected) {
+              setAdding(false);
+              setRenewing(false);
+            }
+            return connected;
+          }}
+        />
+      )}
       {provider === "bitbucket" && selectedAccount && !adding && (
         <button
           className="text-button"
@@ -261,6 +300,7 @@ export function AccountPicker({
           />
         )}
       {provider !== "bitbucket" &&
+        !isCloudflare &&
         supportsMultipleAccounts &&
         (adding || accounts.length === 0) && (
           <div className="account-create">

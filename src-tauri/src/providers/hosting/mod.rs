@@ -6,6 +6,8 @@ mod railway;
 mod render;
 mod support;
 
+pub use cloudflare::authenticate;
+
 #[cfg(all(test, unix))]
 mod provider_integration_tests;
 
@@ -49,5 +51,21 @@ pub async fn page(
         Provider::CloudflarePages => cloudflare_pages::page(cli, target, cursor).await,
         Provider::CloudflareWorkers => cloudflare_workers::page(cli, target, cursor).await,
         _ => Err(CliError::InvalidOutput),
+    }
+}
+
+pub async fn page_api(target: &Target, cursor: Option<&str>) -> Result<ActivityPage, String> {
+    match target.provider {
+        Provider::CloudflarePages => cloudflare_pages::page_api(target, cursor).await,
+        Provider::CloudflareWorkers => cloudflare_workers::page_api(target, cursor).await,
+        _ => Err("The selected provider does not use the Cloudflare API.".into()),
+    }
+}
+
+pub async fn active_api(target: &Target) -> Result<ActivityPage, String> {
+    match target.provider {
+        Provider::CloudflarePages => cloudflare_pages::active_api(target).await,
+        Provider::CloudflareWorkers => cloudflare_workers::active_api(target).await,
+        _ => Err("The selected provider does not use the Cloudflare API.".into()),
     }
 }

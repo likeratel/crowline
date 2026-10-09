@@ -1,5 +1,12 @@
 mod auth;
+mod history;
+mod provider_connections;
 mod refresh_wake;
+mod tray;
+
+#[cfg(test)]
+use tray::active_tray_count;
+use tray::update_tray;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -12,6 +19,7 @@ use chrono::Utc;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::sync::{Mutex, RwLock};
 
+use history::HistoryCache;
 use refresh_wake::RefreshWake;
 
 use crate::{
@@ -67,6 +75,7 @@ pub struct AppState {
     settings_revision: AtomicU64,
     refresh_epoch: AtomicU64,
     history_lock: Mutex<()>,
+    history_cache: Mutex<HistoryCache>,
     notification_engine: Mutex<NotificationEngine>,
     pub login_statuses: Mutex<HashMap<String, LoginStatus>>,
 }
@@ -85,6 +94,7 @@ impl AppState {
             settings_revision: AtomicU64::new(0),
             refresh_epoch: AtomicU64::new(0),
             history_lock: Mutex::new(()),
+            history_cache: Mutex::new(HistoryCache::default()),
             notification_engine: Mutex::new(NotificationEngine::default()),
             login_statuses: Mutex::new(HashMap::new()),
         }
@@ -277,6 +287,11 @@ impl AppState {
             })
             .cloned()
             .collect();
+        let revision = self.settings_revision.load(Ordering::SeqCst);
+        self.history_cache
+            .lock()
+            .await
+            .retain_target_keys(&unchanged_target_keys, revision);
         let pending_targets = previous
             .pending_targets
             .iter()
@@ -343,6 +358,12 @@ impl AppState {
         publisher: &P,
     ) -> Result<Account, String> {
         self.ensure_settings_writable()?;
+        if matches!(
+            provider,
+            Provider::CloudflarePages | Provider::CloudflareWorkers | Provider::Bitbucket
+        ) {
+            return Err("Use the service token connection form.".into());
+        }
         let account = match provider {
             Provider::Github | Provider::GithubDeployments | Provider::Vercel => {
                 if profile.is_some() {
@@ -391,6 +412,24 @@ impl AppState {
             }
         };
         account.validate()?;
+        let account = if matches!(provider, Provider::Firebase | Provider::Eas) {
+            let cli = self
+                .tools
+                .invocation_for(&account)?
+                .ok_or_else(|| "Install and sign in to the service CLI first.".to_owned())?;
+            let identity = if provider == Provider::Firebase {
+                crate::providers::mobile::firebase::identity(&cli).await
+            } else {
+                crate::providers::mobile::eas::identity(&cli).await
+            }
+            .map_err(|error| error.user_message(provider.as_str()))?;
+            Account {
+                profile: Some(identity),
+                ..account
+            }
+        } else {
+            account
+        };
         self.tools.prepare_account(&account)?;
         let _publish_guard = self.publish_lock.lock().await;
         let previous = self.snapshot.read().await.clone();
@@ -501,6 +540,21 @@ impl AppState {
         } else {
             None
         };
+        let restore_cloudflare = if matches!(
+            removed_account.provider,
+            Provider::CloudflarePages | Provider::CloudflareWorkers
+        ) && removed_account.mode == AccountMode::Isolated
+        {
+            Some(
+                crate::cloudflare_credentials::backup_and_delete(
+                    removed_account.provider,
+                    connection_id,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
         let mut settings = previous.settings.clone();
         let before = settings.accounts.len();
         settings
@@ -518,6 +572,20 @@ impl AppState {
         {
             Ok(saved) => saved,
             Err(message) => {
+                if let Some(credential) = restore_cloudflare {
+                    return match crate::cloudflare_credentials::restore(
+                        removed_account.provider,
+                        connection_id,
+                        credential,
+                    )
+                    .await
+                    {
+                        Ok(()) => Err(message),
+                        Err(restore) => Err(format!(
+                            "{message} Credential rollback also failed: {restore}"
+                        )),
+                    };
+                }
                 if let Some(credential) = restore_credential {
                     let restore =
                         crate::credentials::restore_bitbucket(connection_id, credential).await;
@@ -913,64 +981,6 @@ fn with_poll_interval(snapshot: Snapshot) -> Snapshot {
         poll_interval_seconds: poll_interval(&snapshot).as_secs(),
         ..snapshot
     }
-}
-
-fn update_tray<R: Runtime>(app: &AppHandle<R>, snapshot: &Snapshot) {
-    let active = active_tray_count(snapshot);
-    if let Some(tray) = app.tray_by_id(crate::TRAY_ID) {
-        let title = (active > 0).then(|| active.to_string());
-        let tooltip = if active > 0 {
-            format!("crowline — {active} active")
-        } else {
-            "crowline".to_owned()
-        };
-        let _ = tray.set_title(title);
-        let _ = tray.set_tooltip(Some(tooltip));
-    }
-}
-
-fn active_tray_count(snapshot: &Snapshot) -> usize {
-    let mut runs = HashMap::<(Provider, &str, &str), (&Activity, bool)>::new();
-    if !snapshot.settings.panel.show_active {
-        return 0;
-    }
-    let now = Utc::now();
-    for activity in snapshot.activities.iter().filter(|activity| {
-        !snapshot
-            .settings
-            .hidden_activities
-            .iter()
-            .any(|hidden| hidden.matches(activity))
-            && snapshot
-                .settings
-                .panel
-                .includes(activity, &snapshot.settings)
-    }) {
-        let key = (
-            activity.provider,
-            activity.target_id.as_str(),
-            activity.id.as_str(),
-        );
-        let eligible = snapshot.settings.effective_display_scope(
-            activity.provider,
-            Some(&activity.connection_id),
-            Some(&activity.target_id),
-        ) == Scope::All
-            || activity.ownership == Ownership::Mine;
-        let eligible_seen = eligible || runs.get(&key).is_some_and(|(_, seen)| *seen);
-        let latest = runs
-            .get(&key)
-            .map(|(current, _)| newer_observation(current, activity))
-            .unwrap_or(activity);
-        runs.insert(key, (latest, eligible_seen));
-    }
-    runs.values()
-        .filter(|(activity, eligible)| {
-            *eligible
-                && is_active_status(activity.status)
-                && crate::panel::visible_activity(activity, now)
-        })
-        .count()
 }
 
 fn newer_observation<'a>(current: &'a Activity, candidate: &'a Activity) -> &'a Activity {

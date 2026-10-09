@@ -58,10 +58,14 @@ export function ConnectionProgress({
     values?: Readonly<Record<string, string | number>>,
   ) => connectionProgressCopy(locale, key, values);
   const health = summarizeQueryHealth(snapshot, selectedTargets);
-  const isBitbucket = provider === "bitbucket";
+  const isTokenProvider = [
+    "bitbucket",
+    "cloudflare-pages",
+    "cloudflare-workers",
+  ].includes(provider);
   const tool = toolProgress({
     c,
-    isBitbucket,
+    isTokenProvider,
     accountPresent,
     requiresCli,
     connection,
@@ -72,7 +76,7 @@ export function ConnectionProgress({
     accountPresent,
     connection,
     verificationError,
-    isBitbucket,
+    isTokenProvider,
   });
   const project: ProgressRow = selectionPending
     ? {
@@ -144,20 +148,20 @@ export function ConnectionProgress({
 
 function toolProgress({
   c,
-  isBitbucket,
+  isTokenProvider,
   accountPresent,
   requiresCli,
   connection,
   provider,
 }: {
   c: (key: Parameters<typeof connectionProgressCopy>[1]) => string;
-  isBitbucket: boolean;
+  isTokenProvider: boolean;
   accountPresent: boolean;
   requiresCli: boolean;
   connection: Connection | undefined;
   provider: Provider;
 }): ProgressRow {
-  if (isBitbucket) {
+  if (isTokenProvider) {
     if (!accountPresent) {
       return {
         label: c("credential"),
@@ -223,13 +227,13 @@ function accountProgress({
   accountPresent,
   connection,
   verificationError,
-  isBitbucket,
+  isTokenProvider,
 }: {
   c: (key: Parameters<typeof connectionProgressCopy>[1]) => string;
   accountPresent: boolean;
   connection: Connection | undefined;
   verificationError?: string;
-  isBitbucket: boolean;
+  isTokenProvider: boolean;
 }): ProgressRow {
   if (!accountPresent) {
     return {
@@ -247,7 +251,7 @@ function accountProgress({
       state: "complete",
     };
   const needsAuthentication =
-    !isBitbucket &&
+    !isTokenProvider &&
     (connection?.status === "missing-cli" ||
       connection?.status === "signed-out");
   return {

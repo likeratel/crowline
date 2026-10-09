@@ -1,4 +1,5 @@
 use super::*;
+use crate::models::TargetHistory;
 use std::sync::{
     atomic::{AtomicUsize, Ordering as AtomicOrdering},
     Mutex as StdMutex,
@@ -64,6 +65,7 @@ fn state() -> AppState {
         settings_revision: AtomicU64::new(0),
         refresh_epoch: AtomicU64::new(1),
         history_lock: Mutex::new(()),
+        history_cache: Mutex::new(HistoryCache::default()),
         notification_engine: Mutex::new(NotificationEngine::default()),
         login_statuses: Mutex::new(HashMap::new()),
     }
@@ -543,6 +545,251 @@ fn recent_page_preserves_other_targets_and_active_until_scan_finishes() {
 }
 
 #[test]
+fn loaded_history_survives_poll_and_newer_recent_observation_wins() {
+    let selected = target("loaded-history");
+    let mut cache = HistoryCache::default();
+    let current = Snapshot {
+        settings: Settings {
+            targets: vec![selected.clone()],
+            ..Settings::default()
+        },
+        ..Snapshot::initial(Settings::default())
+    };
+    let recent = apply_page_with_history(
+        current,
+        &selected,
+        Ok(ActivityPage {
+            activities: vec![activity(&selected, "recent", ActivityStatus::Success)],
+            next_cursor: Some("2".into()),
+            issues: Vec::new(),
+        }),
+        PageKind::Recent,
+        10,
+        4,
+        &mut cache,
+    );
+    let generation = recent.history[0].generation;
+    assert!(cache.begin_load(&selected, "2", generation, 4, Utc::now()));
+    let mut historical = activity(&selected, "older", ActivityStatus::Success);
+    historical.title = "historical value".into();
+    historical.updated_at = (Utc::now() - chrono::Duration::minutes(2)).to_rfc3339();
+    let loaded = apply_page_with_history(
+        recent,
+        &selected,
+        Ok(ActivityPage {
+            activities: vec![historical],
+            next_cursor: Some("3".into()),
+            issues: Vec::new(),
+        }),
+        PageKind::History,
+        generation,
+        4,
+        &mut cache,
+    );
+    let mut fresh = activity(&selected, "older", ActivityStatus::Success);
+    fresh.title = "newer recent value".into();
+    fresh.updated_at = Utc::now().to_rfc3339();
+    let polled = apply_page_with_history(
+        loaded,
+        &selected,
+        Ok(ActivityPage {
+            activities: vec![
+                activity(&selected, "new-recent", ActivityStatus::Success),
+                fresh,
+            ],
+            next_cursor: Some("provider-restarted-at-2".into()),
+            issues: Vec::new(),
+        }),
+        PageKind::Recent,
+        11,
+        4,
+        &mut cache,
+    );
+
+    assert_eq!(polled.history[0].generation, generation);
+    assert_eq!(polled.history[0].next_cursor.as_deref(), Some("3"));
+    assert_eq!(
+        polled
+            .activities
+            .iter()
+            .find(|activity| activity.id == "older")
+            .unwrap()
+            .title,
+        "newer recent value"
+    );
+}
+
+#[test]
+fn historical_active_rows_are_ignored_and_merge_stops_at_global_limit() {
+    let selected = target("history-limit");
+    let mut cache = HistoryCache::default();
+    let session = cache.recent(&selected, 0, Some("2".into()), Utc::now());
+    assert!(cache.begin_load(&selected, "2", session.entry.generation, 0, Utc::now()));
+    let activities = (0..MAX_HISTORY_ACTIVITIES - 1)
+        .map(|index| {
+            activity(
+                &selected,
+                &format!("existing-{index}"),
+                ActivityStatus::Success,
+            )
+        })
+        .collect();
+    let current = Snapshot {
+        settings: Settings {
+            targets: vec![selected.clone()],
+            ..Settings::default()
+        },
+        activities,
+        history: vec![session.entry.clone()],
+        ..Snapshot::initial(Settings::default())
+    };
+    let next = apply_page_with_history(
+        current,
+        &selected,
+        Ok(ActivityPage {
+            activities: vec![
+                activity(&selected, "stale-running", ActivityStatus::Running),
+                activity(&selected, "last-slot", ActivityStatus::Success),
+                activity(&selected, "over-limit", ActivityStatus::Success),
+            ],
+            next_cursor: Some("3".into()),
+            issues: Vec::new(),
+        }),
+        PageKind::History,
+        session.entry.generation,
+        0,
+        &mut cache,
+    );
+
+    assert_eq!(next.activities.len(), MAX_HISTORY_ACTIVITIES);
+    assert!(!next
+        .activities
+        .iter()
+        .any(|activity| activity.id == "stale-running"));
+    assert!(next
+        .activities
+        .iter()
+        .any(|activity| activity.id == "last-slot"));
+    assert!(!next
+        .activities
+        .iter()
+        .any(|activity| activity.id == "over-limit"));
+    assert!(next.history[0].next_cursor.is_none());
+    assert!(next
+        .issues
+        .iter()
+        .any(|issue| issue.message.contains("History limit reached")));
+}
+
+#[tokio::test]
+async fn account_identity_change_clears_loaded_history_and_chain() {
+    let state = state();
+    let selected = target("identity-bound-history");
+    let old_connection = Connection {
+        connection_id: selected.connection_id.clone(),
+        provider: selected.provider,
+        status: ConnectionStatus::Connected,
+        account: Some("old-user".into()),
+        message: None,
+        cli_version: Some("fixture".into()),
+    };
+    let history =
+        state
+            .history_cache
+            .lock()
+            .await
+            .recent(&selected, 0, Some("2".into()), Utc::now());
+    {
+        let mut snapshot = state.snapshot.write().await;
+        snapshot.settings.targets = vec![selected.clone()];
+        snapshot.connections = vec![old_connection];
+        snapshot.activities = vec![activity(&selected, "older", ActivityStatus::Success)];
+        snapshot.history = vec![history.entry.clone()];
+    }
+    let replacement = Connection {
+        connection_id: selected.connection_id.clone(),
+        provider: selected.provider,
+        status: ConnectionStatus::Connected,
+        account: Some("new-user".into()),
+        message: None,
+        cli_version: Some("fixture".into()),
+    };
+
+    assert!(
+        state
+            .publish_connection(
+                replacement,
+                std::slice::from_ref(&selected),
+                0,
+                1,
+                &Recorder::default()
+            )
+            .await
+    );
+    let snapshot = state.snapshot().await;
+    assert!(snapshot.activities.is_empty());
+    assert!(snapshot.history.is_empty());
+    assert!(!state.history_cache.lock().await.begin_load(
+        &selected,
+        "2",
+        history.entry.generation,
+        0,
+        Utc::now()
+    ));
+}
+
+#[test]
+fn failed_recent_page_does_not_clear_a_pending_history_reset() {
+    let selected = target("failed-recent-history-reset");
+    let mut cache = HistoryCache::default();
+    let initial = cache.recent(&selected, 7, Some("2".into()), Utc::now());
+    assert!(cache.begin_load(&selected, "2", initial.entry.generation, 7, Utc::now()));
+    let committed = cache
+        .commit(
+            &selected,
+            initial.entry.generation,
+            ["older".into()],
+            Some("3".into()),
+            Utc::now(),
+        )
+        .unwrap();
+    assert!(cache.begin_load(&selected, "3", committed.generation, 7, Utc::now()));
+    cache.mark_failed(&selected, "3", committed.generation);
+
+    let current = Snapshot {
+        settings: Settings {
+            targets: vec![selected.clone()],
+            ..Settings::default()
+        },
+        activities: vec![activity(&selected, "older", ActivityStatus::Success)],
+        history: vec![committed.clone()],
+        ..Snapshot::initial(Settings::default())
+    };
+    let failed = apply_page_with_history(
+        current,
+        &selected,
+        Ok(ActivityPage {
+            activities: Vec::new(),
+            next_cursor: None,
+            issues: vec![Issue {
+                provider: selected.provider,
+                connection_id: Some(selected.connection_id.clone()),
+                target_id: Some(selected.id.clone()),
+                message: "provider unavailable".into(),
+            }],
+        }),
+        PageKind::Recent,
+        99,
+        7,
+        &mut cache,
+    );
+
+    assert!(cache.needs_followup());
+    assert_eq!(failed.history, vec![committed]);
+    assert!(!cache.begin_load(&selected, "3", initial.entry.generation, 7, Utc::now()));
+}
+
+#[test]
 fn blocked_observation_replaces_cached_running_even_if_active_scan_fails() {
     let t = Target {
         provider: Provider::Vercel,
@@ -880,6 +1127,27 @@ async fn inflight_request_retries_once_for_unhealthy_targets_but_not_after_full_
     assert!(
         !wake.take_pending(),
         "a request covered by full success must not duplicate the poll"
+    );
+}
+
+#[tokio::test]
+async fn history_failure_during_refresh_preserves_the_requested_followup() {
+    let selected = target("history-recovery-wake");
+    let mut cache = HistoryCache::default();
+    let session = cache.recent(&selected, 0, Some("2".into()), Utc::now());
+    assert!(cache.begin_load(&selected, "2", session.entry.generation, 0, Utc::now()));
+
+    let wake = RefreshWake::default();
+    let refresh_lock = Mutex::new(());
+    let active = wake.begin(refresh_lock.lock().await);
+    cache.mark_failed(&selected, "2", session.entry.generation);
+    wake.request();
+    active.finish(cache.needs_followup());
+
+    assert!(wake.take_pending());
+    assert!(
+        !wake.take_pending(),
+        "history recovery queues one follow-up"
     );
 }
 

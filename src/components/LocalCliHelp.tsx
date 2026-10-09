@@ -18,6 +18,8 @@ const guides: Partial<Record<Provider, string>> = {
   gitlab: "https://docs.gitlab.com/cli/",
   digitalocean: "https://docs.digitalocean.com/reference/doctl/how-to/install/",
   gcloud: "https://cloud.google.com/sdk/docs/install",
+  firebase: "https://cloud.google.com/sdk/docs/install",
+  eas: "https://docs.expo.dev/eas/cli/",
   azure: "https://learn.microsoft.com/cli/azure/install-azure-cli",
 };
 

@@ -28,11 +28,14 @@ Crowline reads through [`vercel api`](https://vercel.com/changelog/introducing-t
 | Heroku / Fly.io | Installed official CLI; release history, not machine-runtime monitoring. |
 | GitLab.com | Installed `glab`; deployment and pipeline monitoring. Self-managed GitLab is outside this integration. |
 | DigitalOcean / Google Cloud / Azure App Service | Installed `doctl`, `gcloud`, or `az` and their local sessions. |
-| Cloudflare Pages / Workers, EAS / Expo, Firebase, Supabase, fastlane | Existing catalog guidance remains; no unsupported history is presented as successful monitoring. |
+| Cloudflare Pages / Workers | User-entered Cloudflare account ID and OS-vault API token; documented direct read-only requests keep Pages, Worker deployments, and Workers Builds separate. Pages needs Cloudflare Pages Read, Worker deployments need Workers Scripts Read, and Builds need Workers CI Read. |
+| Firebase Hosting / App Hosting | Installed `gcloud`, with the connection bound to one verified active account. A short-lived per-process token from that account reads Hosting releases and App Hosting rollouts directly; Firebase CLI login is not used. |
+| EAS / Expo | User-entered EAS project UUID, owner, and slug with an app-managed context for installed `eas` that does not change project files. `eas build:list --json --non-interactive --limit 1 --offset 0` validates the server project identity before project-scoped Build and published Update reads. |
+| Supabase / fastlane | Guidance only. Current Supabase function state is not deployment history; fastlane history belongs to its CI provider. |
 
 No CLI or Node runtime is bundled. Crowline checks installed executables and versions, uses bounded non-interactive commands, and distinguishes installation, login, compatibility, timeout, and partial-query failures. Installation/update links and login commands are available in connection settings; install or update the official CLI, then restart the app. Crowline does not automatically install packages.
 
-Bitbucket credentials stay in the OS secure credential store, separately from settings. Removing a Bitbucket connection removes its app-managed credential. Old GitHub/Vercel API credentials are not used by the CLI paths; migration does not revoke tokens at the provider. CLI logins and provider-side revocation remain under the user's control.
+Bitbucket credentials stay in the OS secure credential store, separately from settings. Cloudflare follows the same vault boundary for its API token. Firebase and EAS reuse their selected installed CLI sessions; any short-lived Firebase access token remains in the backend process and is not persisted, returned over IPC, or obtained by extracting a refresh token. Removing a connection removes only Crowline's monitoring configuration and app-managed vault material. Old GitHub/Vercel API credentials are not used by the CLI paths; migration does not revoke tokens at the provider. CLI logins and provider-side revocation remain under the user's control.
 
 ## Hide individual executions
 

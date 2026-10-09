@@ -79,8 +79,13 @@ crowline은 설치된 공식 CLI를 우선 사용하며, AWS SDK 공유 프로�
 | GitLab.com                        | 배포·CI 파이프라인           | self-managed, 실행자 판정 미지원                                                |
 | Bitbucket Cloud                   | 저장소별 Pipelines           | 이메일·API 토큰 인증, 최근 이력·진행 상태 조회, 실행자 구분. Data Center 미지원 |
 | DigitalOcean, Google Cloud, Azure | 배포·Cloud Build/Run·Kudu    | CLI별 범위·출력·페이지 제한                                                     |
+| Cloudflare Pages / Workers        | Pages 배포, Worker 배포·Builds | 계정 ID와 OS 보안 저장소 API 토큰, 직접 읽기 전용 HTTP. Pages·Workers·Builds 권한을 구분 |
+| Firebase                          | Hosting 게시 릴리스, App Hosting 롤아웃 | 설치된 `gcloud`와 선택된 활성 계정, 프로세스에서만 유지하는 단기 액세스 토큰 |
+| EAS / Expo                        | 프로젝트별 Build, 게시된 Update | 설치된 `eas`, 프로젝트 UUID·소유자·slug 입력. 계정 전체 프로젝트 자동 탐색 없음 |
 
-EAS/Expo, fastlane, Cloudflare Pages/Workers, Firebase, Supabase는 카탈로그에서 제약만 안내하며 직접 조회를 지원하지 않습니다. 로컬 CLI 확인은 지원 불가 사유를 표시할 수 있으나, crowline은 불완전한 서비스 데이터를 실행 활동으로 추정하지 않습니다. CI 작업은 가능한 경우 GitHub Actions나 GitLab 파이프라인으로 감시합니다. [서비스 결정표](docs/authentication.md#provider-decision-matrix)와 [모바일 플랫폼 조사](docs/mobile-provider-notes.md)를 참고하세요. 새 어댑터는 합성 fixture와 명령 계약으로 검증했으며 실계정 로그인 검증은 아닙니다.
+Cloudflare 토큰은 OS 자격 증명 저장소에 보관합니다. Pages에는 **Cloudflare Pages Read**, Worker 배포에는 **Workers Scripts Read**, Builds에는 **Workers CI Read** 권한이 필요합니다. Firebase 연결은 현재 `gcloud` 계정에 고정하고 액세스 토큰·프로젝트 목록에 `--account`를 사용하며 Firebase CLI 로그인은 사용하지 않습니다. EAS는 별도의 읽기 전용 문맥을 만들며 선택한 프로젝트 파일을 읽거나 변경하지 않습니다. 게시된 EAS Update에는 시작 실행자가 없고 실패한 게시 시도도 포함되지 않습니다. Supabase Edge Functions와 fastlane은 계속 CI 안내로 제공하며 신뢰할 수 있는 실행 이력은 GitHub Actions, GitLab CI 또는 fastlane을 실행한 CI에서 확인합니다. [서비스 결정표](docs/authentication.md#provider-decision-matrix)와 [모바일 플랫폼 조사](docs/mobile-provider-notes.md)를 참고하세요.
+
+이 서비스 경로는 합성 어댑터 fixture와 브라우저 검증을 통과했으며 실계정 검증은 하지 않았습니다. 테스트에는 실제 인증 정보나 서비스 응답을 저장하지 않습니다. 결과와 한계는 [공동 제품 리뷰·검증 기록](docs/product-review-2026-10-06.md)에 정리했습니다.
 
 ### Bitbucket Cloud
 

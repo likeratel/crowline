@@ -573,6 +573,34 @@ impl Account {
                     );
                 }
             }
+            Provider::CloudflarePages | Provider::CloudflareWorkers => {
+                let legacy = self.mode == AccountMode::Local
+                    && self.id == format!("{}:local", self.provider.as_str())
+                    && self.profile.is_none();
+                let prefix = format!("{}:", self.provider.as_str());
+                let valid_api = self.mode == AccountMode::Isolated
+                    && self
+                        .id
+                        .strip_prefix(&prefix)
+                        .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
+                    && self.profile.as_deref().is_some_and(|id| {
+                        id.len() == 32 && id.bytes().all(|c| c.is_ascii_hexdigit())
+                    });
+                if self.cli_username.is_some() || !(legacy || valid_api) {
+                    return Err("The Cloudflare connection is invalid.".into());
+                }
+            }
+            Provider::Firebase | Provider::Eas => {
+                if self.mode != AccountMode::Local
+                    || self.id != format!("{}:local", self.provider.as_str())
+                    || self.cli_username.is_some()
+                {
+                    return Err("This provider reuses one verified local CLI session.".into());
+                }
+                if let Some(identity) = self.profile.as_deref() {
+                    validate_text("CLI account identity", identity)?;
+                }
+            }
             Provider::Aws => {
                 if self.cli_username.is_some() {
                     return Err("AWS accounts cannot select a GitHub CLI user.".into());

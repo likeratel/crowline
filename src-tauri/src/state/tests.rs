@@ -1,5 +1,8 @@
 use super::*;
 
+mod provider_connections;
+mod tray;
+
 fn test_directory(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "crowline-{name}-{}-{}",
@@ -19,6 +22,7 @@ fn test_state(directory: &Path) -> AppState {
         settings_revision: AtomicU64::new(0),
         refresh_epoch: AtomicU64::new(0),
         history_lock: Mutex::new(()),
+        history_cache: Mutex::new(HistoryCache::default()),
         notification_engine: Mutex::new(NotificationEngine::default()),
         login_statuses: Mutex::new(HashMap::new()),
     }

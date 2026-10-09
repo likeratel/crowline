@@ -5,6 +5,7 @@ import { resolveLocale, type LanguagePreference } from "./i18n";
 import { copy } from "./featureCopy";
 import {
   targetKey,
+  targetSchema,
   accountSchema,
   connectionSchema,
   discoverySchema,
@@ -79,6 +80,45 @@ export const bridge = {
       },
     };
     return next;
+  },
+  connectCloudflare: async (
+    provider: Provider,
+    accountId: string,
+    token: string,
+    connectionId: string | null,
+  ) => {
+    const input = z
+      .object({
+        provider: z.enum(["cloudflare-pages", "cloudflare-workers"]),
+        accountId: z.string().regex(/^[a-f0-9]{32}$/),
+        token: z
+          .string()
+          .min(16)
+          .max(4096)
+          .regex(/^[\x21-\x7e]+$/),
+        connectionId: z.string().min(1).nullable(),
+      })
+      .parse({ provider, accountId, token, connectionId });
+    if (!isPreview) return call("connect_cloudflare", accountSchema, input);
+    throw new Error(message("desktopOnly"));
+  },
+  registerEasProject: async (
+    connectionId: string,
+    projectId: string,
+    owner: string,
+    slug: string,
+  ) => {
+    const input = z
+      .object({
+        connectionId: z.string().min(1),
+        projectId: z.uuid(),
+        owner: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$/),
+        slug: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$/),
+      })
+      .parse({ connectionId, projectId, owner, slug });
+    if (!isPreview)
+      return call("register_eas_project", z.array(targetSchema), input);
+    throw new Error(message("desktopOnly"));
   },
   connectBitbucket: async (
     email: string,
