@@ -43,8 +43,7 @@ export const en = {
     "Preview · Sample data. Live connections are available in the desktop app.",
   "dashboard.connectedProjects": "Connected projects",
   "dashboard.title": "Run overview",
-  "dashboard.subtitle":
-    "Track recent runs for the selected account.",
+  "dashboard.subtitle": "Track recent runs for the selected account.",
   "dashboard.active": "In progress",
   "dashboard.runs": "runs",
   "dashboard.completed": "Recently completed",

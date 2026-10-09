@@ -23,7 +23,8 @@ const en = {
   register: "Register project",
   registering: "Registering project…",
   registered: "Project added and monitoring selection saved.",
-  reloadNeeded: "The connection was saved, but the view could not refresh. Try again.",
+  reloadNeeded:
+    "The connection was saved, but the view could not refresh. Try again.",
   retry: "Try again",
   ciGuidance: "View the CI record that ran fastlane.",
   supabaseGuidance:
@@ -56,7 +57,8 @@ const ko: Record<keyof typeof en, string> = {
   register: "프로젝트 등록",
   registering: "프로젝트 등록 중…",
   registered: "프로젝트를 추가했고 모니터링 선택을 저장했습니다.",
-  reloadNeeded: "연결은 저장됐지만 화면을 갱신하지 못했습니다. 다시 시도하세요.",
+  reloadNeeded:
+    "연결은 저장됐지만 화면을 갱신하지 못했습니다. 다시 시도하세요.",
   retry: "다시 시도",
   ciGuidance: "fastlane을 실행한 CI 기록을 확인하세요.",
   supabaseGuidance:
@@ -89,7 +91,8 @@ const ja: Record<keyof typeof en, string> = {
   register: "プロジェクトを登録",
   registering: "プロジェクトを登録中…",
   registered: "プロジェクトを追加し、監視対象の選択を保存しました。",
-  reloadNeeded: "接続は保存されましたが、画面を更新できませんでした。再試行してください。",
+  reloadNeeded:
+    "接続は保存されましたが、画面を更新できませんでした。再試行してください。",
   retry: "再試行",
   ciGuidance: "fastlane を実行した CI の記録を確認してください。",
   supabaseGuidance:
@@ -137,9 +140,6 @@ const catalogs: Record<Locale, Record<keyof typeof en, string>> = {
   "zh-CN": zhCN,
 };
 
-export function expansionCopy(
-  locale: Locale,
-  key: keyof typeof en,
-): string {
+export function expansionCopy(locale: Locale, key: keyof typeof en): string {
   return catalogs[locale][key];
 }

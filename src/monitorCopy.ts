@@ -77,8 +77,7 @@ const ja: Record<Key, string> = {
   lastAttempt: "最終取得試行",
   lastSuccess: "最終取得成功",
   noSuccess: "取得に成功していません",
-  healthHelp:
-    "最後に確認した結果です。取得エラーは実行の失敗を意味しません。",
+  healthHelp: "最後に確認した結果です。取得エラーは実行の失敗を意味しません。",
   all: "すべて",
   active: "進行中",
   failed: "失敗",

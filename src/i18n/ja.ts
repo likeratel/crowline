@@ -43,8 +43,7 @@ export const ja = {
     "プレビュー · サンプルデータです。実際の接続はデスクトップアプリで利用できます。",
   "dashboard.connectedProjects": "接続済みプロジェクト",
   "dashboard.title": "実行状況",
-  "dashboard.subtitle":
-    "選択したアカウントの最近の実行状況を確認できます。",
+  "dashboard.subtitle": "選択したアカウントの最近の実行状況を確認できます。",
   "dashboard.active": "実行中",
   "dashboard.runs": "件",
   "dashboard.completed": "最近完了",
