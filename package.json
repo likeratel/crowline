@@ -40,5 +40,5 @@
     "vite": "^8.0.16",
     "vitest": "^5.0.2"
   },
-  "description": "A local-first menu bar and system tray monitor for GitHub Actions, Vercel, and AWS. Built with Tauri."
+  "description": "Local-first menu bar and system tray monitor for deployment and CI status across GitHub Actions, Vercel, AWS, Bitbucket, and more. Built with Tauri 2, React, and Rust."
 }

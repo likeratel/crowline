@@ -2,75 +2,38 @@
 
 ## Distribution status
 
-The repository is private. Local builds and direct file handoff work without a GitHub release, but
-there is no public production update service. The application does not attach repository
-credentials to updater requests, so the private GitHub Releases URL cannot serve updates to
-customers. Do not publish a workflow draft or describe it as a production update channel until a
-reachable update service has been designed and implemented.
+There is no public production update service yet. Local builds and direct file handoff work without a
+GitHub release, and the application does not attach repository credentials to updater requests, so a
+release endpoint cannot serve updates to users until a reachable update service has been designed and
+implemented. Do not publish a workflow draft or describe it as a production update channel before
+that exists.
 
 The **Build signed validation draft** workflow is an internal packaging gate. It accepts an explicit
 `macos`, `windows`, or `macos-and-windows` scope and creates a private draft only after the selected
 jobs build and pass platform trust checks. A green run proves the artifacts from that run passed the
-checks below; it does not make the private updater endpoint usable. Publishing, distribution, and
-changing repository visibility remain manual decisions outside the workflow.
+checks below; it does not make an updater endpoint usable. Publishing, distribution, and changing
+repository visibility remain manual decisions outside the workflow.
 
 Ordinary `pnpm desktop:build` remains a local developer build. It uses
 `createUpdaterArtifacts: false` and needs none of the release secrets.
 
-## Latest local QA candidate — 2026-10-04
+## Signing evidence to date
 
-The current Apple Silicon candidate was built from the reviewed working tree after the UI,
-selection, account-safety, large-history, settings preservation, event subscription recovery and UI/UX follow-up fixes. No new source commit, release tag, or public
-release was created.
+A Developer ID candidate built on 2026-10-04 from the reviewed working tree passed app and DMG
+notarization, strict Developer ID signature verification with a secure timestamp, staple validation,
+and Gatekeeper assessment as **Notarized Developer ID**, with hardened runtime enabled. The DMG was
+mounted read-only and contained no bundled provider tools. Machine-readable verification output for
+that candidate is kept outside the repository: `artifacts/` and `src-tauri/target/` are ignored local
+directories and are not durable repository evidence.
 
-- Installer: `artifacts/qa-release-2026-10-04-r3/crowline_0.1.0_aarch64.dmg` (7,934,582 bytes).
-- SHA-256: `de7cf9ec694afa0b5c5780cb06f5ad06ce1ad977b0815a36a245a2bd8878867d`.
-- App executable SHA-256: `5bac544f012c6240caccdfc6b5ff05656a26292f2a4dc6ebc5140df61ff84e0a`; app bundle 14,314,432 bytes.
-- App notarization: **Accepted**, submission `87478045-101c-4d96-a821-c9c431342f93`.
-- DMG notarization: **Accepted**, submission `82827029-e590-455d-b79b-d14af91e6e41`.
-- App and DMG passed strict Developer ID signature verification, secure timestamp, staple validation,
-  and Gatekeeper assessment as **Notarized Developer ID**. The app has hardened runtime.
-- The DMG was mounted read-only. Its contained app passed signature, staple and Gatekeeper checks,
-  matched the verified executable hash, and contained no bundled provider tools.
-- The canonical generated DMG at `src-tauri/target/release/bundle/dmg/crowline_0.1.0_aarch64.dmg`
-  was replaced with this same verified installer. The canonical app bundle was also stapled.
-- Detailed local machine-readable evidence: `artifacts/qa-release-2026-10-04-r3/verification.json`.
+That candidate predates the 2026-10-06 provider expansion (Cloudflare, Firebase, EAS) and the
+refresh/history hardening. Those changes have only been built as unsigned local debug bundles; no
+signed candidate includes them yet.
 
-The latest native app was restarted and left on the dashboard. Existing six monitored targets
-remained present; the monitored GitHub, Vercel and Bitbucket accounts all reached query-complete
-status. Native UI checks confirmed scoped totals (all monitored accounts 3/3 versus the selected
-service's 1/1), no-results guidance, filter reset retaining the service, and focus returning to
-search. These checks changed no saved settings. The earlier candidate's alias Save/Cancel, notification
-switch/defaults, scope controls and unavailable-updater state were inspected without changing saved
-user settings. This is not a new-account onboarding,
-OS notification delivery, Windows, or public-updater acceptance test.
-
-## Artifact identity and existing evidence
-
-The earlier October 4 candidate in `artifacts/qa-release-2026-10-04/` has DMG SHA-256
-`c749656eae784eab4999158aa839ef1c948dde0b390fae469946f8e2360732bb` and executable SHA-256
-`94cff9d22888be8d499b3fdd0392b388ab5855fa0ea0aa6d9fc371dc3533e6f1`. It was notarized but predates
-the settings preservation and event subscription recovery fixes. The `-r2` candidate has DMG SHA-256
-`1d07444bbbb746cbb5e818501a3f6e2c3e4da341206e2ca1a5cafb405c5a6dfb` and predates the UI/UX follow-up.
-Both are superseded by the `-r3` candidate above.
-
-Version text is not an artifact identity. Several different local files report version `0.1.0`.
-Use the source commit when known, the full path or release asset name, and SHA-256 together. Signing
-evidence for one hash must never be used to describe another build.
-
-The following is a local inspection snapshot captured on 2026-10-04 before the next QA candidate
-was built. Files under `artifacts/` and `src-tauri/target/` are ignored local files and are not
-durable repository evidence.
-
-| Artifact                                                                             | SHA-256 or executable SHA-256                                                 | Observed result                                                                                                                                            | Meaning                                                                        |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `src-tauri/target/release/bundle/dmg/crowline_0.1.0_aarch64.dmg`                     | `5fad5ceaf4d1c7419cb5eb092fedf66f5055758b1b8747fda22a8d0b51f392c2`            | DMG unsigned; no stapled ticket                                                                                                                            | Pre-hardening output was not distributable; now replaced by the candidate above.                      |
-| `src-tauri/target/release/bundle/macos/crowline.app`                                 | executable `c24e3315b5d6930d1e22356bd9943ff2ad4350f86da549cc0ab665db3db86020` | Ad-hoc/linker signature; `codesign --verify --deep --strict` failed with missing sealed resources; no stapled ticket                                       | Historical pre-hardening hash; now replaced.                      |
-| `artifacts/crowline-notarized-2026-10-02/crowline_0.1.0_apple-silicon_notarized.dmg` | `d5868bc5a8217d55bb2ef2f609699bfe2a403fc4c5f3166ab5603e8b2479d18c`            | Developer ID signed; DMG ticket validated; Gatekeeper reported `Notarized Developer ID`; recorded source commit `255c31a8cac086264d41725b519d33908e37b235` | Valid evidence only for this exact prior DMG.                                  |
-| `artifacts/macos-signing-check/dmg-root/crowline.app`                                | executable `18fb2aa6cb7bfd943612a0ce2952c75c509260da70c8ce1a52cbb4760ee98619` | Strict Developer ID signature valid; extracted app itself has no stapled ticket; executable differs from the current local app                             | A copy from the prior notarized build, not proof for current source or output. |
-
-The prior notarized DMG and the current local app have different executable hashes even though both
-report version `0.1.0`. Any new handoff needs a new artifact hash and its own verification record.
+Version text is not an artifact identity. Several different local files report version `0.1.0`. Use
+the source commit when known, the full path or release asset name, and SHA-256 together. Signing
+evidence for one hash must never be used to describe another build, and any new handoff needs a new
+artifact hash and its own verification record.
 
 ## Trust layers
 
@@ -188,7 +151,7 @@ updater disabled, and reports `updaterConfigured: false`.
 
 The release-only overlay enables `createUpdaterArtifacts` and embeds
 `CROWLINE_UPDATER_PUBLIC_KEY`. This is enough to generate and verify signed updater artifacts, but it
-does not make the private GitHub URL anonymously reachable. Do not invent or document a public URL
+does not make the GitHub release endpoint a reachable update service. Do not invent or document a public URL
 until a real distribution service exists.
 
 At runtime, `install_update` installs only the update previously returned by `check_update`. The

@@ -156,7 +156,7 @@ jobs:
           releaseName: crowline v__VERSION__ validation draft
           releaseBody: >-
             Internal validation draft. Do not publish until every selected platform job and the
-            release checklist pass. The private GitHub updater URL is not a public update channel.
+            release checklist pass. The GitHub updater URL is not a public update channel.
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: true

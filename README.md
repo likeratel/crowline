@@ -6,6 +6,8 @@ English · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中�
 
 crowline is a menu-bar and system-tray app for deployment and CI status. Check recent runs at a glance, then open the dashboard to connect accounts, search history, and configure notifications. Built with Tauri 2, React, TypeScript, and Rust; service queries run on your computer. The interface follows your system language and supports English, Korean, Japanese, and Simplified Chinese.
 
+> **Verification status.** GitHub Actions, Vercel, and Bitbucket Cloud have been exercised with real accounts. Every other service is covered by command-contract tests against official CLI and API documentation using synthetic data, not by a live-account check. See [provider verification](docs/provider-verification.md) and the [2026-10-06 product review](docs/product-review-2026-10-06.md).
+
 ## See it in action
 
 A quick tour: menu bar panel → deployment overview → service filter → connections → project notification rules.
@@ -115,7 +117,7 @@ Settings and hidden execution keys live in `io.crowline.desktop/settings.json` u
 
 If settings cannot be read or a migration cannot be saved, the app preserves the original file and locks settings/account changes with a recovery notice. Restore a valid backup or the folder permissions, then restart the app. Readable settings and monitoring results remain available.
 
-Automatic updates are not configured in the current build. The repository is private, and its release endpoint is not a public update source. See [release engineering](docs/releases.md) before enabling distribution or updates.
+Automatic updates are not configured in the current build. There is no public update endpoint yet. See [release engineering](docs/releases.md) before enabling distribution or updates.
 
 The latest CLI-first multi-account changes have synthetic tests; live sign-in for every CLI version and Windows execution remain unverified.
 

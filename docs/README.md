@@ -4,7 +4,7 @@ The localized READMEs are the source of truth for build/run instructions, suppor
 
 | Document                                                | Purpose                                                                                        |
 | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| [Release engineering](releases.md)                      | Local builds and the future signing/update workflow; private-repository limitations            |
+| [Release engineering](releases.md)                      | Local builds, signing evidence to date, and the future signing/update workflow                 |
 | [Authentication and provider access](authentication.md) | Local CLI accounts, token-based exceptions, provider support, and migration behavior |
 | [Product QA, 2026-10-04](qa-2026-10-04.md) | Performance measurements, UX fixes, release readiness and remaining evidence gaps |
 | [Product evolution, 2026-10-06](product-evolution-plan-2026-10-06.md) | Approved evolution scope, implemented behavior, and pending final evidence |
