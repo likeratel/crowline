@@ -35,3 +35,4 @@ src-tauri/resources/tools/*
 
 # Local agent orchestration state
 .omx/
+.omc/
