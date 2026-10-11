@@ -168,7 +168,10 @@ test("large histories render in pages while search covers every loaded run", asy
     name: "최근 종료",
     exact: true,
   });
-  await expect(completed.locator(".activity-row")).toHaveCount(50);
+  // Rendering 5,000 injected activities can exceed the default 5 s on slow CI runners.
+  await expect(completed.locator(".activity-row")).toHaveCount(50, {
+    timeout: 20_000,
+  });
   await expect(completed.locator(".activity-pagination")).toContainText(
     "50 / 5000",
   );
@@ -180,5 +183,8 @@ test("large histories render in pages while search covers every loaded run", asy
   await expect(completed.locator(".activity-row")).toHaveCount(1);
   await expect(completed).toContainText("Find distant run");
   await page.getByRole("textbox", { name: "실행 검색", exact: true }).fill("");
-  await expect(completed.locator(".activity-row")).toHaveCount(50);
+  // Rendering 5,000 injected activities can exceed the default 5 s on slow CI runners.
+  await expect(completed.locator(".activity-row")).toHaveCount(50, {
+    timeout: 20_000,
+  });
 });
