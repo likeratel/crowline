@@ -2,6 +2,8 @@
 
 [English](README.md) · [한국어](README.ko.md) · 日本語 · [简体中文](README.zh-CN.md)
 
+[![Verify desktop builds](https://github.com/likeratel/crowline/actions/workflows/verify.yml/badge.svg)](https://github.com/likeratel/crowline/actions/workflows/verify.yml)
+
 <img src="public/crowline.png" alt="電線にとまる三羽のカラス" width="160" />
 
 crowline はデプロイと CI の実行状況を確認するメニューバー・システムトレイアプリです。パネルで最近の実行を確認し、ダッシュボードでアカウント接続、履歴検索、通知を設定できます。Tauri 2、React、TypeScript、Rust 製で、サービスへの問い合わせは利用者のコンピューター上で行います。表示言語はシステム設定に従い、日本語・英語・韓国語・簡体字中国語に対応します。
@@ -148,3 +150,5 @@ cargo clippy --all-targets -- -D warnings
 ## ライセンス
 
 crowline は [MIT License](LICENSE) で提供します。現在のパッケージとロゴの告知は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)にあります。カラスアイコンの来歴は[ブランドノート](docs/brand.md)にあります。
+
+crowline は独立したプロジェクトです。GitHub、Vercel、Amazon Web Services、Atlassian、Cloudflare、Google、Microsoft など監視対象のサービスとは提携・承認・後援の関係にありません。サービス名とロゴは各所有者の商標であり、該当サービスを識別する目的でのみ使用しています。

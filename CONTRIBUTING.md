@@ -46,6 +46,11 @@ cargo clippy --all-targets -- -D warnings
 - Adding a provider? Record the official CLI or API contract you implemented against and whether a
   live account was used, following [docs/provider-verification.md](docs/provider-verification.md).
 
+## License of contributions
+
+By submitting a pull request you agree that your contribution is licensed under the
+[MIT License](LICENSE) that covers this repository.
+
 ## Reporting security issues
 
 Please do not open a public issue for a vulnerability. Use GitHub's private vulnerability reporting

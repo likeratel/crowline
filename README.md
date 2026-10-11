@@ -2,6 +2,8 @@
 
 English · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
+[![Verify desktop builds](https://github.com/likeratel/crowline/actions/workflows/verify.yml/badge.svg)](https://github.com/likeratel/crowline/actions/workflows/verify.yml)
+
 <img src="public/crowline.png" alt="Three watchful crows sitting on a wire" width="160" />
 
 crowline is a menu-bar and system-tray app for deployment and CI status. Check recent runs at a glance, then open the dashboard to connect accounts, search history, and configure notifications. Built with Tauri 2, React, TypeScript, and Rust; service queries run on your computer. The interface follows your system language and supports English, Korean, Japanese, and Simplified Chinese.
@@ -148,3 +150,5 @@ These are current repository commands; this README does not claim fixed test cou
 ## License
 
 crowline is available under the [MIT License](LICENSE). Current package and logo notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Crow icon provenance is in [brand notes](docs/brand.md).
+
+crowline is an independent project. It is not affiliated with, endorsed by, or sponsored by GitHub, Vercel, Amazon Web Services, Atlassian, Cloudflare, Google, Microsoft, or any other service it can monitor. Service names and logos are trademarks of their respective owners and are used only to identify the corresponding service.

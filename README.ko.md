@@ -2,6 +2,8 @@
 
 [English](README.md) · 한국어 · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
+[![Verify desktop builds](https://github.com/likeratel/crowline/actions/workflows/verify.yml/badge.svg)](https://github.com/likeratel/crowline/actions/workflows/verify.yml)
+
 <img src="public/crowline.png" alt="줄 위에서 바라보는 세 마리 까마귀" width="160" />
 
 crowline은 배포와 CI 실행 상태를 확인하는 메뉴 막대·시스템 트레이 앱입니다. 패널에서 최근 실행을 빠르게 확인하고, 대시보드에서 계정 연결·이력 검색·알림을 설정합니다. Tauri 2, React, TypeScript, Rust로 만들었으며 서비스 조회는 사용자 컴퓨터에서 실행됩니다. 언어는 시스템 설정을 따르고 한국어·영어·일본어·중국어 간체를 지원합니다.
@@ -148,3 +150,5 @@ cargo clippy --all-targets -- -D warnings
 ## 라이선스
 
 crowline은 [MIT License](LICENSE)로 제공합니다. 현재 패키지와 로고 고지는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)에 있습니다. 까마귀 아이콘 출처는 [브랜드 노트](docs/brand.md)에 기록했습니다.
+
+crowline은 독립 프로젝트입니다. GitHub, Vercel, Amazon Web Services, Atlassian, Cloudflare, Google, Microsoft 등 모니터링 대상 서비스와 제휴·보증·후원 관계가 없습니다. 서비스 이름과 로고는 각 소유자의 상표이며 해당 서비스를 식별하는 용도로만 사용합니다.

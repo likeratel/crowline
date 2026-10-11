@@ -2,6 +2,8 @@
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · 简体中文
 
+[![Verify desktop builds](https://github.com/likeratel/crowline/actions/workflows/verify.yml/badge.svg)](https://github.com/likeratel/crowline/actions/workflows/verify.yml)
+
 <img src="public/crowline.png" alt="三只停在电线上的乌鸦" width="160" />
 
 crowline 是在菜单栏和系统托盘中查看部署与 CI 状态的应用。通过摘要面板快速查看最近的执行记录，在仪表板中连接账号、搜索历史并设置通知。应用使用 Tauri 2、React、TypeScript 和 Rust 构建，所有服务查询都在本机进行。界面默认跟随系统语言，支持简体中文、英语、韩语和日语。
@@ -148,3 +150,5 @@ cargo clippy --all-targets -- -D warnings
 ## 许可证
 
 crowline 使用 [MIT License](LICENSE)。当前包和标志声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。乌鸦图标来源见[品牌说明](docs/brand.md)。
+
+crowline 是独立项目，与 GitHub、Vercel、Amazon Web Services、Atlassian、Cloudflare、Google、Microsoft 等可监控的服务没有任何从属、认可或赞助关系。服务名称和标志是各自所有者的商标，仅用于标识对应的服务。
