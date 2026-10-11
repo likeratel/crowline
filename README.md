@@ -8,6 +8,8 @@ English · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中�
 
 crowline is a menu-bar and system-tray app for deployment and CI status. Check recent runs at a glance, then open the dashboard to connect accounts, search history, and configure notifications. Built with Tauri 2, React, TypeScript, and Rust; service queries run on your computer. The interface follows your system language and supports English, Korean, Japanese, and Simplified Chinese.
 
+**Download:** the signed and notarized macOS build (Apple Silicon and Intel) is on the [Releases page](https://github.com/likeratel/crowline/releases). No Windows installer is published yet.
+
 > **Verification status.** GitHub Actions, Vercel, and Bitbucket Cloud have been exercised with real accounts. Every other service is covered by command-contract tests against official CLI and API documentation using synthetic data, not by a live-account check. See [provider verification](docs/provider-verification.md) and the [2026-10-06 product review](docs/product-review-2026-10-06.md).
 
 ## See it in action

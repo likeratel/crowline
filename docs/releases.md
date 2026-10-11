@@ -19,6 +19,15 @@ Ordinary `pnpm desktop:build` remains a local developer build. It uses
 
 ## Signing evidence to date
 
+The public **v0.1.0** release on GitHub Releases (2026-10-11) is `crowline_0.1.0_universal.dmg`, a
+universal (Apple Silicon and Intel) build from source commit `41559d7` signed with Developer ID and
+hardened runtime. The app bundle and the disk image were each notarized and stapled, and both passed
+the repository's `scripts/release-artifacts.mjs` checks: strict signature verification, secure
+timestamp, staple validation, and Gatekeeper assessment as **Notarized Developer ID**. The app inside
+the mounted image carries its own staple. DMG SHA-256:
+`5f8412b84b84a13ed9e9e7b65ca0c2551b95b3310a535327c2ddec9cc950e344`. It was built locally with
+`pnpm tauri build --target universal-apple-darwin`; no Windows installer was published.
+
 A Developer ID candidate built on 2026-10-04 from the reviewed working tree passed app and DMG
 notarization, strict Developer ID signature verification with a secure timestamp, staple validation,
 and Gatekeeper assessment as **Notarized Developer ID**, with hardened runtime enabled. The DMG was
@@ -26,9 +35,8 @@ mounted read-only and contained no bundled provider tools. Machine-readable veri
 that candidate is kept outside the repository: `artifacts/` and `src-tauri/target/` are ignored local
 directories and are not durable repository evidence.
 
-That candidate predates the 2026-10-06 provider expansion (Cloudflare, Firebase, EAS) and the
-refresh/history hardening. Those changes have only been built as unsigned local debug bundles; no
-signed candidate includes them yet.
+That earlier candidate predates the 2026-10-06 provider expansion (Cloudflare, Firebase, EAS) and
+the refresh/history hardening; the v0.1.0 release above is the first signed build that includes them.
 
 Version text is not an artifact identity. Several different local files report version `0.1.0`. Use
 the source commit when known, the full path or release asset name, and SHA-256 together. Signing

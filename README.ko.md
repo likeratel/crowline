@@ -8,6 +8,8 @@
 
 crowline은 배포와 CI 실행 상태를 확인하는 메뉴 막대·시스템 트레이 앱입니다. 패널에서 최근 실행을 빠르게 확인하고, 대시보드에서 계정 연결·이력 검색·알림을 설정합니다. Tauri 2, React, TypeScript, Rust로 만들었으며 서비스 조회는 사용자 컴퓨터에서 실행됩니다. 언어는 시스템 설정을 따르고 한국어·영어·일본어·중국어 간체를 지원합니다.
 
+**다운로드:** 서명·공증된 macOS 빌드(Apple Silicon·Intel)는 [Releases 페이지](https://github.com/likeratel/crowline/releases)에 있습니다. Windows 설치 파일은 아직 공개하지 않았습니다.
+
 > **검증 범위.** GitHub Actions, Vercel, Bitbucket Cloud는 실제 계정으로 동작을 확인했습니다. 나머지 서비스는 공식 CLI·API 문서를 기준으로 가상 데이터를 사용한 명령 계약 테스트만 거쳤고, 실계정 검증은 하지 않았습니다. [서비스 검증 기록](docs/provider-verification.md)과 [2026-10-06 제품 리뷰](docs/product-review-2026-10-06.md)를 참고하세요.
 
 ## 미리 보기

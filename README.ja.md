@@ -8,6 +8,8 @@
 
 crowline はデプロイと CI の実行状況を確認するメニューバー・システムトレイアプリです。パネルで最近の実行を確認し、ダッシュボードでアカウント接続、履歴検索、通知を設定できます。Tauri 2、React、TypeScript、Rust 製で、サービスへの問い合わせは利用者のコンピューター上で行います。表示言語はシステム設定に従い、日本語・英語・韓国語・簡体字中国語に対応します。
 
+**ダウンロード:** 署名・公証済みの macOS ビルド（Apple Silicon・Intel）は [Releases ページ](https://github.com/likeratel/crowline/releases)にあります。Windows インストーラーはまだ公開していません。
+
 > **検証範囲。** GitHub Actions、Vercel、Bitbucket Cloud は実際のアカウントで動作を確認しています。その他のサービスは公式 CLI・API ドキュメントに基づき、架空データによるコマンド契約テストのみを行っており、実アカウントでの検証はしていません。[プロバイダー検証記録](docs/provider-verification.md)と [2026-10-06 の製品レビュー](docs/product-review-2026-10-06.md)を参照してください。
 
 ## プレビュー
